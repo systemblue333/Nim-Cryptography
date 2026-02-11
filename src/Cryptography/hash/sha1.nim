@@ -6,97 +6,99 @@ import ../../../../Utility/src/Utility/codeutils/errorutils
 import ../../../../Utility/src/Utility/dataformat/dataformat
 
 # common sha1 operating process template
-template process(chunk: lent array[64, uint8], V: var array[5, uint32]): void =
+template process(chunk: lent openArray[uint8], state: var array[5, uint32]): void =
+  # declare extended chunk
   var w: array[80, uint32]
 
-  for i in static(0 ..< 16):
-    let j = i * 4
-    w[i] = (uint32(chunk[j]) shl 24) or
-    (uint32(chunk[j + 1]) shl 16) or
-    (uint32(chunk[j + 2]) shl 8) or
-    uint32(chunk[j + 3])
+  # decode chunk to extended chunk(w)
+  discard decodeBE(chunk, w.toOpenArray(0, 15), 16)
 
+  # extend w
   for i in static(16..<80):
     w[i] = leftRotate(w[i-3] xor w[i-8] xor w[i-14] xor w[i-16], 1)
 
-  var h: array[5, uint32]
-  copyArray(V, h)
+  # declare and initialize temporary variables
+  var a: uint32 = state[0]
+  var b: uint32 = state[1]
+  var c: uint32 = state[2]
+  var d: uint32 = state[3]
+  var e: uint32 = state[4]
 
-  const
-    A = 0
-    B = 1
-    C = 2
-    D = 3
-    E = 4
-
+  # round loop : 80
   for i in static(0 ..< 80):
     var f: uint32
     var k: uint32
 
     if i <= 19:
-      f = (h[B] and h[C]) or ((not h[B]) and h[D])
+      f = (b and c) xor ((not b) and d)
       k = 0x5a827999'u32
     elif i <= 39:
-      f = h[B] xor h[C] xor h[D]
+      f = b xor c xor d
       k = 0x6ed9eba1'u32
     elif i <= 59:
-      f = (h[B] and h[C]) or (h[B] and h[D]) or (h[C] and h[D])
+      f = (b and c) xor (b and d) xor (c and d)
       k = 0x8f1bbcdc'u32
     elif i <= 79:
-      f = h[B] xor h[C] xor h[D]
+      f = b xor c xor d
       k = 0xca62c1d6'u32
 
-    let temp = leftRotate(h[A], 5) + f + h[E] + k + w[i]
-    h[E] = h[D]
-    h[D] = h[C]
-    h[C] = leftRotate(h[B], 30)
-    h[B] = h[A]
-    h[A] = temp
+    let temp = leftRotate(a, 5) + f + e + k + w[i]
+    e = d
+    d = c
+    c = leftRotate(b, 30)
+    b = a
+    a = temp
 
-  V[0] += h[A]
-  V[1] += h[B]
-  V[2] += h[C]
-  V[3] += h[D]
-  V[4] += h[E]
+  # assign and add temporary variables to state
+  state[0] += a
+  state[1] += b
+  state[2] += c
+  state[3] += d
+  state[4] += e
 
-# one-shot sha1 core
-template sha1OneC(msg: lent openArray[uint8]): array[20, uint8] =
+# one-shot sha0 core
+template sha1OneC(input: lent openArray[uint8]): array[20, uint8] =
+  # declare output
   var output: array[20, uint8]
-  var input: seq[uint8]
-  for i in 0 ..< msg.len:
-    input.add(msg[i])
-  var V: array[5, uint32] = [0x67452301'u32, 0xefcdab89'u32, 0x98badcfe'u32, 0x10325476'u32, 0xC3D2E1F0'u32]
+  # declare buffer
+  let totalLen = ((input.len + 9 + 63) div 64) * 64
+  var buffer: seq[uint8] = newSeq[uint8](totalLen)
+  # declare and initialize index
+  var index: int = input.len
+  # copy input to buffer
+  for i in 0 ..< input.len:
+    buffer[i] = input[i]
+  # declare and initialize state
+  var state: array[5, uint32] = [0x67452301'u32, 0xefcdab89'u32, 0x98badcfe'u32, 0x10325476'u32, 0xC3D2E1F0'u32]
 
-  # bit len of msg
-  let ml: int = input.len * 8
+  # append '1' bit -> 0x80
+  buffer[index] = 0x80'u8
+  index += 1
 
-  # 1. append '1' bit -> 0x80
-  input.add(0x80'u8)
+  # append '0' bits until index mod 64 == 56
+  while (index mod 64) != 56:
+    buffer[index] = 0x00'u8
+    index += 1
 
-  # 2. append '0' bits until length = 448 mod 512
-  while ((input.len * 8) mod 512) != 448:
-    input.add(0x00'u8)
-
-  for i in countdown(7, 0):
-    input.add(uint8((ml shr (i * 8)) and 0xFF))
+  let bitLen = uint64(input.len) * 8
+  for i in static(0 ..< 8):
+    buffer[index + i] = uint8((bitLen shr ((7 - i) * 8)) and 0xFF)
 
   # break chunk 512bits
-  for chunkStart in countup(0, input.len - 64, 64):
-    var buffer: seq[uint8] = input[chunkStart ..< chunkStart + 64]
-    var chunk: array[64, uint8]
-    toArray(buffer, chunk)
+  for chunkStart in countup(0, buffer.len - 64, 64):
+    process(buffer[chunkStart..<chunkStart + 64], state)
 
-    process(chunk, V)
-
-  encodeBE(V, output)
+  # encode state to output
+  encodeBE(state, output)
 
   output
 
+# CPU's bits constant
 const
   Bits*: int = sizeof(int) * 8
 
-
 when Bits == 64:
+  # SHA-1 context for 64 bits
   type
     SHA1Ctx* = object
       intermediateHash*: array[5, uint32]
@@ -105,6 +107,7 @@ when Bits == 64:
       messageBlock*: array[64, uint8]
       computed*: bool
 else:
+  # SHA-1 context for 32/lower bits
   type
     SHA1Ctx* = object
       intermediateHash*: array[5, uint32]
@@ -115,7 +118,11 @@ else:
 
 # initialize sha1 ctx
 template sha1InitC(ctx: var SHA1Ctx): void =
-  ctx.bitLength = 0
+  when Bits == 64:
+    ctx.bitLength = 0
+  else:
+    for i in static(0 ..< 2):
+      ctx.bitLength[i] = 0
   ctx.messageBlockIndex = 0
   ctx.intermediateHash[0] = 0x67452301'u32
   ctx.intermediateHash[1] = 0xefcdab89'u32
@@ -126,82 +133,93 @@ template sha1InitC(ctx: var SHA1Ctx): void =
 
 # sha1 input core
 template sha1InputC(ctx: var SHA1Ctx, input: openArray[uint8]): void =
-  var isValid: bool = true
+  # declare check variables
+  var check: bool = true
   # check computed state and input length
   if ctx.computed or input.len == 0:
-    isValid = false
+    check = false
 
-  if isValid:
+  if check:
+    # declare and initialize constant and index
     var index: int = 0
-    let length: int= input.len
+    let inputLen: int = input.len
 
-    while index < length:
+    # add input bit length to ctx.bitLength
+    # 64 bits version
+    when Bits == 64:
+      ctx.bitLength += uint64(inputLen shl 3)
+    # 32/lower bits version
+    else:
+      let oldLow = ctx.bitLength[0]
+      ctx.bitLength[0] += uint32((inputLen shl 3) and 0xFFFFFFFF'u32)
+      if ctx.bitLength[0] < oldLow:
+        ctx.bitLength[1] += 1
+      ctx.bitLength[1] += uint32((inputLen shl 3) shr 32)
+
+    if ctx.messageBlockIndex > 0:
       let space: int = 64 - ctx.messageBlockIndex
-      let fill: int = min(length - index, space)
+      let fill: int = min(inputLen, space)
 
-      copyMem(addr ctx.messageBlock[ctx.messageBlockIndex], addr input[index], fill)
-
-      let fillBits: uint64 = fill.uint64 shl 3
-
-      when Bits == 64:
-        ctx.bitLength += uint64(fill * 8)
-      else:
-        let oldLow = ctx.bitLength[0]
-        ctx.bitLength[0] += uint32(fillBits and 0xFFFFFFFF'u64)
-
-        if ctx.bitLength[0] < oldLow:
-          ctx.bitLength[1] += 1
-        ctx.bitLength[1] = uint32(fillBits shr 32)
-
-      ctx.messageBlockIndex += fill
-
-      index += fill
+      copyMem(addr ctx.messageBlock[ctx.messageBlockIndex], addr input[0], fill)
 
       if ctx.messageBlockIndex == 64:
         process(ctx.messageBlock, ctx.intermediateHash)
         ctx.messageBlockIndex = 0
 
+      while index <= inputLen - 64:
+        process(input.toOpenArray(index, index + 63), ctx.intermediateHash)
+        index += 64
+
+    let rem = inputLen - index
+    if rem > 0:
+      copyMem(addr ctx.messageBlock[0], unsafeAddr input[index], rem)
+      ctx.messageBlockIndex = rem
+
 # sha1 finalize core
 template sha1FinalC(ctx: var SHA1Ctx): array[20, uint8] =
-  var isValid: bool = true
+  var check: bool = true
   var output: array[20, uint8]
 
   # check computed state and encode
   if ctx.computed:
     encodeBE(ctx.intermediateHash, output)
-    isValid = false
+    check = false
 
-  if isValid:
+  if check:
     # do padding(add 0x80 and zero)
-    ctx.messageBlock[ctx.messageBlockIndex] = 0x80'u8
+    ctx.messageBlock[ctx.messageBlockIndex] = 0x80
     ctx.messageBlockIndex += 1
 
+    # if messageBlockIndex is bigger then 56
     if ctx.messageBlockIndex > 56:
+      # add 0 while messageBlockIndex is smaller then 64
       while ctx.messageBlockIndex < 64:
         ctx.messageBlock[ctx.messageBlockIndex] = 0
         ctx.messageBlockIndex += 1
+      # call process
       process(ctx.messageBlock, ctx.intermediateHash)
       ctx.messageBlockIndex = 0
 
+    # add 0 whil messageBlockIndex is smaller then 56
     while ctx.messageBlockIndex < 56:
       ctx.messageBlock[ctx.messageBlockIndex] = 0
       ctx.messageBlockIndex += 1
 
-    # add bit length by big endian
-    # don't use bits.nim because of performance and memory layout
-    ctx.messageBlock[56] = uint8(ctx.bitLength shr 56)
-    ctx.messageBlock[57] = uint8(ctx.bitLength shr 48)
-    ctx.messageBlock[58] = uint8(ctx.bitLength shr 40)
-    ctx.messageBlock[59] = uint8(ctx.bitLength shr 32)
-    ctx.messageBlock[60] = uint8(ctx.bitLength shr 24)
-    ctx.messageBlock[61] = uint8(ctx.bitLength shr 16)
-    ctx.messageBlock[62] = uint8(ctx.bitLength shr 8)
-    ctx.messageBlock[63] = uint8(ctx.bitLength)
+    # add bit length to end by big endian
+    when Bits == 64:
+      for i in static(0 ..< 8):
+        ctx.messageBlock[56 + i] = uint8(ctx.bitLength shr ((7 - i) * 8) and 0xFF)
+    else:
+      for i in static(0 ..< 4):
+        ctx.messageBlock[56 + i] = uint8(ctx.bitLength[0] shr ((7 - i) * 8) and 0xFF)
+      for i in static(4 ..< 8):
+        ctx.messageBlock[56 + i] = uint8(ctx.bitLength[1] shr ((7 - i) * 8) and 0xFF)
 
     # process and encoding part
     process(ctx.messageBlock, ctx.intermediateHash)
     ctx.computed = true
 
+    # encode intermediateHash to output
     encodeBE(ctx.intermediateHash, output)
 
   output
@@ -212,31 +230,19 @@ when defined(templateOpt):
     sha1InitC(ctx)
   template sha1Input*(ctx: var SHA1Ctx, input: lent openArray[uint8]): void =
     sha1InputC(ctx, input)
-  when defined(varOpt):
-    template sha1Fianl*(ctx: var SHA1Ctx, output: var array[20, uint8]): void =
-      output = sha1FinalC(ctx)
-    template sha1One*(input: lent openArray[uint8], output: var array[20, uint8]): void =
-      output = sha1OneC(input)
-  else:
-    template sha1Final*(ctx: var SHA1Ctx): array[20, uint8] =
-      sha1FinalC(ctx)
-    template sha1One*(input: lent openArray[uint8]): array[20, uint8] =
-      sha1OneC(input)
+  template sha1Final*(ctx: var SHA1Ctx): array[20, uint8] =
+    sha1FinalC(ctx)
+  template sha1One*(input: lent openArray[uint8]): array[20, uint8] =
+    sha1OneC(input)
 else:
   proc sha1Init*(ctx: var SHA1Ctx): void =
     sha1InitC(ctx)
   proc sha1Input*(ctx: var SHA1Ctx, input: openArray[uint8]): void =
     sha1InputC(ctx, input)
-  when defined(varOpt):
-    proc sha1Fianl*(ctx: var SHA1Ctx, output: var array[20, uint8]): void =
-      output = sha1FinalC(ctx)
-    proc sha1One*(input: openArray[uint8], output: var array[20, uint8]): void =
-      output = sha1OneC(input)
-  else:
-    proc sha1Final*(ctx: var SHA1Ctx): array[20, uint8] =
-      sha1FinalC(ctx)
-    proc sha1One*(input: openArray[uint8]): array[20, uint8] =
-      sha1OneC(input)
+  proc sha1Final*(ctx: var SHA1Ctx): array[20, uint8] =
+    sha1FinalC(ctx)
+  proc sha1One*(input: openArray[uint8]): array[20, uint8] =
+    sha1OneC(input)
 
 when defined(test):
   var s: seq[uint8] = charToBin("Hello, World!")
