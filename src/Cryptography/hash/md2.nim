@@ -33,6 +33,7 @@ const
   ]
 
 # Padding : pre calculated padding list
+# block makes constant in compile time
 const Padding: array[16, array[16, uint8]] = (block:
   var p: array[16, array[16, uint8]]
   for i in 1..16:
@@ -41,11 +42,11 @@ const Padding: array[16, array[16, uint8]] = (block:
   p
 )
 
-# transform part
-template md2Transform(ctx: var MD2Ctx, blockData: lent openArray[uint8]): void =
-  for i in 0 ..< 16:
-    ctx.state[i + 16] = blockData[i]
-    ctx.state[i + 32] = ctx.state[i] xor blockData[i]
+# md2 transform part
+template md2Transform(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
+  for i in static(0 ..< 16):
+    ctx.state[i + 16] = input[i]
+    ctx.state[i + 32] = ctx.state[i] xor input[i]
 
   var t: uint8 = 0.uint8
   for i in static(0 ..< 18):
@@ -55,11 +56,11 @@ template md2Transform(ctx: var MD2Ctx, blockData: lent openArray[uint8]): void =
     t = (t + i.uint8) and 0xFF'u8
 
   var l: uint8 = ctx.checksum[15]
-  for i in 0 ..< 16:
-    ctx.checksum[i] = ctx.checksum[i] xor PISubst[(blockData[i] xor l).int]
+  for i in static(0 ..< 16):
+    ctx.checksum[i] = ctx.checksum[i] xor PISubst[(input[i] xor l).int]
     l = ctx.checksum[i]
 
-# MD2 initialize core
+# md2 init core
 template md2InitC(ctx: var MD2Ctx): void =
   ctx.count = 0
   for i in static(0 ..< 48):
@@ -68,7 +69,7 @@ template md2InitC(ctx: var MD2Ctx): void =
   for i in static(0 ..< 16):
     ctx.checksum[i] = 0
 
-# MD2 input core
+# md2 input core
 template md2InputC(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
   var i: int = 0
   let inputLen: int = input.len
@@ -84,7 +85,7 @@ template md2InputC(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
 
     i.inc
 
-# MD2 finalize core
+# md2 final core
 template md2FinalC(ctx: var MD2Ctx): array[16, uint8] =
   var output: array[16, uint8]
   let padLen = 16 - ctx.count
@@ -108,12 +109,8 @@ when defined(templateOpt):
     md2InitC(ctx)
   template md2Input*(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
     md2InputC(ctx, input)
-  when defined(varOpt):
-    template md2Final*(ctx: var MD2Ctx, output: var array[16, uint8]): void =
-      output = md2FinalC(ctx)
-  else:
-    template md2Final*(ctx: var MD2Ctx): array[16, uint8] =
-      md2FinalC(ctx)
+  template md2Final*(ctx: var MD2Ctx): array[16, uint8] =
+    md2FinalC(ctx)
 else:
   proc md2Init*(ctx: var MD2Ctx): void =
     md2InitC(ctx)
@@ -121,19 +118,15 @@ else:
   proc md2Input*(ctx: var MD2Ctx, input: openArray[uint8]): void =
     md2InputC(ctx, input)
     return
-  when defined(varOpt):
-    proc md2Final*(ctx: var MD2Ctx, output: var array[16, uint8]): void =
-      output = md2FinalC(ctx)
-      return
-  else:
-    proc md2Final*(ctx: var MD2Ctx): array[16, uint8] =
-      return md2FinalC(ctx)
+  proc md2Final*(ctx: var MD2Ctx): array[16, uint8] =
+    return md2FinalC(ctx)
 
-# test vector
-var s: seq[uint8] = charToBin("Hello, World!")
-var ctx: MD2Ctx
-md2Init(ctx)
-md2Input(ctx, s)
-echo "MD2Stream : ", binToHex(md2Final(ctx))
-echo "MD2 Standard : 1C8F1E6A94AAA7145210BF90BB52871A"
-echo "Input : Hello, World!"
+# test code
+when defined(test):
+  var s: seq[uint8] = charToBin("Hello, World!")
+  var ctx: MD2Ctx
+  md2Init(ctx)
+  md2Input(ctx, s)
+  echo "MD2Stream : ", binToHex(md2Final(ctx))
+  echo "MD2 Standard : 1C8F1E6A94AAA7145210BF90BB52871A"
+  echo "Input : Hello, World!"
