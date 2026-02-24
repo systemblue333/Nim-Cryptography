@@ -2,200 +2,313 @@ import ../../../../Utility/src/Utility/codeutils/indexutils
 import ../../../../Utility/src/Utility/codeutils/bits
 import ../../../../Utility/src/Utility/codeutils/errorutils
 import ../../../../Utility/src/Utility/dataformat/dataformat
+import std/[monotimes, times]
+import std/bitops
 
+# CPU's bits constant
 const
   Bits*: int = sizeof(int) * 8
 
 when Bits == 64:
+  # md4 context for 64 bits
   type
     MD4Ctx* = object
       state*: array[4, uint32]
       count*: uint64
       buffer*: array[64, uint8]
-else:
+elif Bits == 32:
+  # md4 context for 32 bits
   type
     MD4Ctx* = object
       state*: array[4, uint32]
       count*: array[2, uint32]
       buffer*: array[64, uint8]
+else:
+  # md4 context for 8/16 bits
+  type
+    MD4Ctx* = object
+      state*: array[16, uint8]
+      count*: array[8, uint8]
+      buffer*: array[64, uint8]
 
+# Padding : precalculated padding list
+# block makes constant in compile time
 const
-  Padding: array[64, uint8] = (block:
-    var p: array[64, uint8]
-    p[0] = 0x80'u8
-    for i in 1 ..< 64:
-      p[i] = 0x00'u8
-    p
-  )
-  S11: uint32 = 3
-  S12: uint32 = 7
-  S13: uint32 = 11
-  S14: uint32 = 19
-  S21: uint32 = 3
-  S22: uint32 = 5
-  S23: uint32 = 9
-  S24: uint32 = 13
-  S31: uint32 = 3
-  S32: uint32 = 9
-  S33: uint32 = 11
-  S34: uint32 = 15
+  # rotate constant for FF round
+  S1: array[4, uint32] = [3'u32, 7'u32, 11'u32, 19'u32]
+  # rotate constant for GG round
+  S2: array[4, uint32] = [3'u32, 5'u32, 9'u32, 13'u32]
+  # rotate constant for HH round
+  S3: array[4, uint32] = [3'u32, 9'u32, 11'u32, 15'u32]
 
-template F(x, y, z: lent uint32): uint32 =
-  (x and y) or ((not x) and z)
+  S: array[48, uint32] = [
+  3'u32, 7'u32, 11'u32, 19'u32, 3'u32, 7'u32, 11'u32, 19'u32, 3'u32, 7'u32, 11'u32, 19'u32, 3'u32, 7'u32, 11'u32, 19'u32,
+  3'u32, 5'u32, 9'u32, 13'u32, 3'u32, 5'u32, 9'u32, 13'u32, 3'u32, 5'u32, 9'u32, 13'u32, 3'u32, 5'u32, 9'u32, 13'u32,
+  3'u32, 9'u32, 11'u32, 15'u32, 3'u32, 9'u32, 11'u32, 15'u32, 3'u32, 9'u32, 11'u32, 15'u32, 3'u32, 9'u32, 11'u32, 15'u32
+  ]
 
-template G(x, y, z: lent uint32): uint32 =
-  ((x and y) or ((x and z) or (y and z)))
+  # state index for GG round
+  GGIndex: array[16, int] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
+  # state index for HH round
+  HHIndex: array[16, int] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15]
 
-template H(x, y, z: lent uint32): uint32 =
-  (x xor y xor z)
+when Bits == 64 or Bits == 32:
+  # declare F sub template
+  template F(x, y, z: lent uint32): uint32 =
+    (x and y) or ((not x) and z)
 
-template FF(a: var uint32, b, c, d, x, s: lent uint32): void =
-  a += F(b, c, d) + x
-  a = leftRotate(a, s)
+  # declare G sub template
+  template G(x, y, z: lent uint32): uint32 =
+    ((x and y) or ((x and z) or (y and z)))
 
-template GG(a: var uint32, b, c, d, x, s: lent uint32): void =
-  a += G(b, c, d) + x + 0x5a827999'u32
-  a = leftRotate(a, s)
+  # declare H sub template
+  template H(x, y, z: lent uint32): uint32 =
+    (x xor y xor z)
 
-template HH(a: var uint32, b, c, d, x, s: lent uint32): void =
-  a += H(b, c, d) + x + 0x6ed9eba1'u32
-  a = leftRotate(a, s)
+  # declare FF round template
+  template FF(a: var uint32, b, c, d, x, s: lent uint32): void =
+    a += F(b, c, d) + x
+    a = rotateLeftBits(a, s)
 
-template md4InitC(ctx: var MD4Ctx): void =
-  when Bits == 64:
-    ctx.count = 0'u64
-  else:
-    ctx.count[0] = 0'u32
-    ctx.count[1] = 0'u32
-  ctx.state[0] = 0x67452301'u32
-  ctx.state[1] = 0xefcdab89'u32
-  ctx.state[2] = 0x98badcfe'u32
-  ctx.state[3] = 0x10325476'u32
+  # declare GG round template
+  template GG(a: var uint32, b, c, d, x, s: lent uint32): void =
+    a += G(b, c, d) + x + 0x5a827999'u32
+    a = rotateLeftBits(a, s)
 
-template md4Transform(state: var array[4, uint32], input: lent array[64, uint8]): void =
-  var a: uint32 = state[0]
-  var b: uint32 = state[1]
-  var c: uint32 = state[2]
-  var d: uint32 = state[3]
-  var x: array[16, uint32]
+  # declare HH round template
+  template HH(a: var uint32, b, c, d, x, s: lent uint32): void =
+    a += H(b, c, d) + x + 0x6ed9eba1'u32
+    a = rotateLeftBits(a, s)
 
-  decodeLE(input, x)
+  # md4 init core
+  template md4InitC(ctx: var MD4Ctx): void =
+    when Bits == 64:
+      ctx.count = 0'u64
+    elif Bits == 32:
+      ctx.count[0] = 0'u32
+      ctx.count[1] = 0'u32
 
-  FF(a, b, c, d, x[ 0], S11)
-  FF(d, a, b, c, x[ 1], S12)
-  FF(c, d, a, b, x[ 2], S13)
-  FF(b, c, d, a, x[ 3], S14)
-  FF(a, b, c, d, x[ 4], S11)
-  FF(d, a, b, c, x[ 5], S12)
-  FF(c, d, a, b, x[ 6], S13)
-  FF(b, c, d, a, x[ 7], S14)
-  FF(a, b, c, d, x[ 8], S11)
-  FF(d, a, b, c, x[ 9], S12)
-  FF(c, d, a, b, x[10], S13)
-  FF(b, c, d, a, x[11], S14)
-  FF(a, b, c, d, x[12], S11)
-  FF(d, a, b, c, x[13], S12)
-  FF(c, d, a, b, x[14], S13)
-  FF(b, c, d, a, x[15], S14)
+    # initialize state
+    ctx.state[0] = 0x67452301'u32
+    ctx.state[1] = 0xefcdab89'u32
+    ctx.state[2] = 0x98badcfe'u32
+    ctx.state[3] = 0x10325476'u32
 
-  GG(a, b, c, d, x[ 0], S21)
-  GG(d, a, b, c, x[ 4], S22)
-  GG(c, d, a, b, x[ 8], S23)
-  GG(b, c, d, a, x[12], S24)
-  GG(a, b, c, d, x[ 1], S21)
-  GG(d, a, b, c, x[ 5], S22)
-  GG(c, d, a, b, x[ 9], S23)
-  GG(b, c, d, a, x[13], S24)
-  GG(a, b, c, d, x[ 2], S21)
-  GG(d, a, b, c, x[ 6], S22)
-  GG(c, d, a, b, x[10], S23)
-  GG(b, c, d, a, x[14], S24)
-  GG(a, b, c, d, x[ 3], S21)
-  GG(d, a, b, c, x[ 7], S22)
-  GG(c, d, a, b, x[11], S23)
-  GG(b, c, d, a, x[15], S24)
+    # initialize buffer
+    for i in static(0 ..< 64):
+      ctx.buffer[i] = 0x00'u8
 
-  HH(a, b, c, d, x[ 0], S31)
-  HH(d, a, b, c, x[ 8], S32)
-  HH(c, d, a, b, x[ 4], S33)
-  HH(b, c, d, a, x[12], S34)
-  HH(a, b, c, d, x[ 2], S31)
-  HH(d, a, b, c, x[10], S32)
-  HH(c, d, a, b, x[ 6], S33)
-  HH(b, c, d, a, x[14], S34)
-  HH(a, b, c, d, x[ 1], S31)
-  HH(d, a, b, c, x[ 9], S32)
-  HH(c, d, a, b, x[ 5], S33)
-  HH(b, c, d, a, x[13], S34)
-  HH(a, b, c, d, x[ 3], S31)
-  HH(d, a, b, c, x[11], S32)
-  HH(c, d, a, b, x[ 7], S33)
-  HH(b, c, d, a, x[15], S34)
+  # md4 transform part for pointer little endian
+  when cpuEndian == littleEndian:
+    template md4TransformP(state: var array[4, uint32], input: ptr UncheckedArray[uint8]): void =
+      var chunk: ptr UncheckedArray[uint32] = cast[ptr UncheckedArray[uint32]](input)
 
-  state[0] += a
-  state[1] += b
-  state[2] += c
-  state[3] += d
+      var a: uint32 = state[0]
+      var b: uint32 = state[1]
+      var c: uint32 = state[2]
+      var d: uint32 = state[3]
 
-template md4InputC(ctx: var MD4Ctx, input: lent openArray[uint8]): void =
-  let inputLen: int = input.len
+      FF(a, b, c, d, chunk[ 0], S[ 0])
+      FF(d, a, b, c, chunk[ 1], S[ 1])
+      FF(c, d, a, b, chunk[ 2], S[ 2])
+      FF(b, c, d, a, chunk[ 3], S[ 3])
+      FF(a, b, c, d, chunk[ 4], S[ 4])
+      FF(d, a, b, c, chunk[ 5], S[ 5])
+      FF(c, d, a, b, chunk[ 6], S[ 6])
+      FF(b, c, d, a, chunk[ 7], S[ 7])
+      FF(a, b, c, d, chunk[ 8], S[ 8])
+      FF(d, a, b, c, chunk[ 9], S[ 9])
+      FF(c, d, a, b, chunk[10], S[10])
+      FF(b, c, d, a, chunk[11], S[11])
+      FF(a, b, c, d, chunk[12], S[12])
+      FF(d, a, b, c, chunk[13], S[13])
+      FF(c, d, a, b, chunk[14], S[14])
+      FF(b, c, d, a, chunk[15], S[15])
 
-  when Bits == 64:
-    var index: uint32 = uint32((ctx.count shr 3) and 0x3F'u64)
-    ctx.count += uint64(inputLen) shl 3
-  else:
-    var index: uint32 = (ctx.count[0] shr 3) and 0x3F'u32
+      GG(a, b, c, d, chunk[ 0], S[16])
+      GG(d, a, b, c, chunk[ 4], S[17])
+      GG(c, d, a, b, chunk[ 8], S[18])
+      GG(b, c, d, a, chunk[12], S[19])
+      GG(a, b, c, d, chunk[ 1], S[20])
+      GG(d, a, b, c, chunk[ 5], S[21])
+      GG(c, d, a, b, chunk[ 9], S[22])
+      GG(b, c, d, a, chunk[13], S[23])
+      GG(a, b, c, d, chunk[ 2], S[24])
+      GG(d, a, b, c, chunk[ 6], S[25])
+      GG(c, d, a, b, chunk[10], S[26])
+      GG(b, c, d, a, chunk[14], S[27])
+      GG(a, b, c, d, chunk[ 3], S[28])
+      GG(d, a, b, c, chunk[ 7], S[29])
+      GG(c, d, a, b, chunk[11], S[30])
+      GG(b, c, d, a, chunk[15], S[31])
 
-    ctx.count[0] += uint32(inputLen shl 3)
-    if ctx.count[0] < uint32(inputLen shl 3):
-      ctx.count[1] += 1
-    ctx.count[1] += uint32(inputLen shr 29)
+      HH(a, b, c, d, chunk[ 0], S[32])
+      HH(d, a, b, c, chunk[ 8], S[33])
+      HH(c, d, a, b, chunk[ 4], S[34])
+      HH(b, c, d, a, chunk[12], S[35])
+      HH(a, b, c, d, chunk[ 2], S[36])
+      HH(d, a, b, c, chunk[10], S[37])
+      HH(c, d, a, b, chunk[ 6], S[38])
+      HH(b, c, d, a, chunk[14], S[39])
+      HH(a, b, c, d, chunk[ 1], S[40])
+      HH(d, a, b, c, chunk[ 9], S[41])
+      HH(c, d, a, b, chunk[ 5], S[42])
+      HH(b, c, d, a, chunk[13], S[43])
+      HH(a, b, c, d, chunk[ 3], S[44])
+      HH(d, a, b, c, chunk[11], S[45])
+      HH(c, d, a, b, chunk[ 7], S[46])
+      HH(b, c, d, a, chunk[15], S[47])
 
-  let partLen: int = 64 - index.int
+      state[0] += a
+      state[1] += b
+      state[2] += c
+      state[3] += d
 
-  var i: int = 0
+  # md4 transform part for big endian
+  template md4Transform(state: var array[4, uint32], input: openArray[uint8]): void =
+    var chunk: array[16, uint32]
 
-  if inputLen >= partLen:
-    for i in 0 ..< partLen:
-      ctx.buffer[index.int + i] = input[i]
-    md4Transform(ctx.state, ctx.buffer)
+    decodeLE(input, chunk, 16)
 
-    i = partLen
-    while i + 63 < inputLen:
-      var buffer: array[64, uint8]
-      for j in static(0 ..< 64):
-        buffer[j] = input[i + j]
-      md4Transform(ctx.state, buffer)
+    var a: uint32 = state[0]
+    var b: uint32 = state[1]
+    var c: uint32 = state[2]
+    var d: uint32 = state[3]
 
-      i += 64
-    index = 0
+    FF(a, b, c, d, chunk[ 0], S[ 0])
+    FF(d, a, b, c, chunk[ 1], S[ 1])
+    FF(c, d, a, b, chunk[ 2], S[ 2])
+    FF(b, c, d, a, chunk[ 3], S[ 3])
+    FF(a, b, c, d, chunk[ 4], S[ 4])
+    FF(d, a, b, c, chunk[ 5], S[ 5])
+    FF(c, d, a, b, chunk[ 6], S[ 6])
+    FF(b, c, d, a, chunk[ 7], S[ 7])
+    FF(a, b, c, d, chunk[ 8], S[ 8])
+    FF(d, a, b, c, chunk[ 9], S[ 9])
+    FF(c, d, a, b, chunk[10], S[10])
+    FF(b, c, d, a, chunk[11], S[11])
+    FF(a, b, c, d, chunk[12], S[12])
+    FF(d, a, b, c, chunk[13], S[13])
+    FF(c, d, a, b, chunk[14], S[14])
+    FF(b, c, d, a, chunk[15], S[15])
 
-  if i < inputLen:
-    for j in 0 ..< (inputLen - i):
-      ctx.buffer[index.int + j] = input[i + j]
+    GG(a, b, c, d, chunk[ 0], S[16])
+    GG(d, a, b, c, chunk[ 4], S[17])
+    GG(c, d, a, b, chunk[ 8], S[18])
+    GG(b, c, d, a, chunk[12], S[19])
+    GG(a, b, c, d, chunk[ 1], S[20])
+    GG(d, a, b, c, chunk[ 5], S[21])
+    GG(c, d, a, b, chunk[ 9], S[22])
+    GG(b, c, d, a, chunk[13], S[23])
+    GG(a, b, c, d, chunk[ 2], S[24])
+    GG(d, a, b, c, chunk[ 6], S[25])
+    GG(c, d, a, b, chunk[10], S[26])
+    GG(b, c, d, a, chunk[14], S[27])
+    GG(a, b, c, d, chunk[ 3], S[28])
+    GG(d, a, b, c, chunk[ 7], S[29])
+    GG(c, d, a, b, chunk[11], S[30])
+    GG(b, c, d, a, chunk[15], S[31])
 
-template md4FinalC(ctx: var MD4Ctx): array[16, uint8] =
-  var output: array[16, uint8]
-  var bits: array[8, uint8]
+    HH(a, b, c, d, chunk[ 0], S[32])
+    HH(d, a, b, c, chunk[ 8], S[33])
+    HH(c, d, a, b, chunk[ 4], S[34])
+    HH(b, c, d, a, chunk[12], S[35])
+    HH(a, b, c, d, chunk[ 2], S[36])
+    HH(d, a, b, c, chunk[10], S[37])
+    HH(c, d, a, b, chunk[ 6], S[38])
+    HH(b, c, d, a, chunk[14], S[39])
+    HH(a, b, c, d, chunk[ 1], S[40])
+    HH(d, a, b, c, chunk[ 9], S[41])
+    HH(c, d, a, b, chunk[ 5], S[42])
+    HH(b, c, d, a, chunk[13], S[43])
+    HH(a, b, c, d, chunk[ 3], S[44])
+    HH(d, a, b, c, chunk[11], S[45])
+    HH(c, d, a, b, chunk[ 7], S[46])
+    HH(b, c, d, a, chunk[15], S[47])
 
-  when Bits == 64:
-    toBytesLE(ctx.count, bits)
-  else:
-    encodeLE(ctx.count, bits)
+    state[0] += a
+    state[1] += b
+    state[2] += c
+    state[3] += d
+  # md4 input core
+  template md4InputC(ctx: var MD4Ctx, input: lent openArray[uint8]): void =
+    when Bits == 64:
+      var inputLen: int = input.len
+      var index: uint32 = uint32((ctx.count shr 3) and 0x3F'u64)
+      ctx.count += inputLen.uint64 shl 3
+    else:
+      var index: uint32 = (ctx.count[0] shr 3) and 0x3F'u32
 
-  when Bits == 64:
-    let index: uint32 = uint32((ctx.count shr 3) and 0x3F'u64)
-  else:
-    let index: uint32 = (ctx.count[0] shr 3) and 0x3F'u32
-  let padLen: uint32 = if index < 56'u32: 56'u32 - index else: 120'u32- index
+      ctx.count[0] += uint32(input.len shl 3)
+      if ctx.count[0] < uint32(input.len shl 3):
+        ctx.count[1] += 1
+      ctx.count[1] += uint32(input.len shr 29)
+      var inputLen: int = input.len
 
-  md4InputC(ctx, Padding[0 ..< padLen])
+    let partLen: int = 64 - index.int
 
-  md4InputC(ctx, bits)
+    var i: int = 0
 
-  encodeLE(ctx.state, output)
+    if inputLen >= partLen:
+      for i in 0 ..< partLen:
+        ctx.buffer[index.int + i] = input[i]
+      when cpuEndian == littleEndian:
+        md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
+      else:
+        md4Transform(ctx.state, ctx.buffer)
 
-  output
+      i = partLen
+      while i + 63 < inputLen:
+        md4Transform(ctx.state, input[i..i+63])
+
+        i += 64
+      index = 0
+
+    if i < inputLen:
+      for j in 0 ..< (inputLen - i):
+        ctx.buffer[index.int + j] = input[i + j]
+
+  # md4 final core
+  template md4FinalC(ctx: var MD4Ctx): array[16, uint8] =
+    var output: array[16, uint8]
+    var bits: array[8, uint8]
+
+    when Bits == 64:
+      toBytesLE(ctx.count, bits)
+    else:
+      encodeLE(ctx.count, bits)
+
+    when Bits == 64:
+      var index: int = int((ctx.count shr 3) and 0x3F'u64)
+    else:
+      var index: int = int((ctx.count[0] shr 3) and 0x3F'u32)
+
+    ctx.buffer[index] = 0x80'u8
+    index.inc
+
+    let padLen: int = if index < 56: 56 - index else: 64 - index
+
+    if index < 56:
+      zeroMem(addr ctx.buffer[index], padLen)
+    else:
+      zeroMem(addr ctx.buffer[index], padLen)
+      when cpuEndian == littleEndian:
+        md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
+      else:
+        md4Transform(ctx.state, ctx.buffer)
+
+      zeroMem(addr ctx.buffer[0], 56)
+
+    for i in static(0 ..< 8):
+      ctx.buffer[56 + i] = bits[i]
+
+    when cpuEndian == littleEndian:
+      md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
+    else:
+      md4Transform(ctx.state, ctx.buffer)
+    encodeLE(ctx.state, output)
+
+    output
 
 # export wrappers
 when defined(templateOpt):
@@ -222,10 +335,22 @@ else:
       md4FinalC(ctx)
 
 when defined(test):
-  var S: seq[uint8] = charToBin("Hello, World!")
+  var s: seq[uint8] = charToBin("Hello, World!")
   var ctx: MD4Ctx
   md4Init(ctx)
-  md4Input(ctx, S)
+  md4Input(ctx, s)
   echo "MD4Stream : ", binToHex(md4Final(ctx))
   echo "MD4 Standard : 94E3CB0FA9AA7A5EE3DB74B79E915989"
   echo "Input : Hello, World!"
+  template benchmark(name: string, code: untyped) =
+    let start = getMonoTime()
+    code
+    let elapsed = getMonoTime() - start
+    echo name, " took: ", elapsed.inMicroseconds, " μs (", elapsed.inNanoseconds, " ns)"
+  var a: array[16, uint8]
+  var ctx2: MD4Ctx
+  md4Init(ctx2)
+  benchmark("MD4 Benchamark"):
+    for i in 1 .. 1_000_000:
+      md4Input(ctx2, a)
+      a = md4Final(ctx2)
