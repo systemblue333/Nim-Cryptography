@@ -33,47 +33,22 @@ const
   49, 68, 80, 180, 143, 237, 31, 26, 219, 153, 141, 51, 159, 17, 131, 20
   ]
 
-# Padding : pre calculated padding list
-# block makes constant in compile time
-const Padding: array[16, array[16, uint8]] = (block:
-  var p: array[16, array[16, uint8]]
-  for i in 1..16:
-    for j in 0 ..< i:
-      p[i-1][j] = i.uint8
-  p
-)
-#[
-# md2 transform part
-template md2Transform(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
-  for i in static(0 ..< 16):
-    ctx.state[i + 16] = input[i]
-    ctx.state[i + 32] = ctx.state[i] xor input[i]
-
-  var t: uint8 = 0.uint8
-  for i in static(0 ..< 18):
-    for j in static(0 ..< 48):
-      ctx.state[j] = ctx.state[j] xor PISubst[t.int]
-      t = ctx.state[j]
-    t = (t + i.uint8) and 0xFF'u8
-
-  var l: uint8 = ctx.checksum[15]
-  for i in static(0 ..< 16):
-    ctx.checksum[i] = ctx.checksum[i] xor PISubst[(input[i] xor l).int]
-    l = ctx.checksum[i]
-]#
 # md2 transform part
 template md2Transform(ctx: var MD2Ctx, input: ptr UncheckedArray[uint8]): void =
+  # copy input and extend ctx's state
   for i in static(0 ..< 16):
     ctx.state[i + 16] = input[i]
     ctx.state[i + 32] = ctx.state[i] xor input[i]
 
   var t: uint8 = 0.uint8
+  # calculate block to temp value
   for i in static(0 ..< 18):
     for j in static(0 ..< 48):
       ctx.state[j] = ctx.state[j] xor PISubst[t.int]
       t = ctx.state[j]
     t = (t + i.uint8) and 0xFF'u8
 
+  # add temp value
   var l: uint8 = ctx.checksum[15]
   for i in static(0 ..< 16):
     ctx.checksum[i] = ctx.checksum[i] xor PISubst[(input[i] xor l).int]
@@ -81,44 +56,77 @@ template md2Transform(ctx: var MD2Ctx, input: ptr UncheckedArray[uint8]): void =
 
 # md2 init core
 template md2InitC(ctx: var MD2Ctx): void =
+  # count to zero
   ctx.count = 0
-  for i in static(0 ..< 48):
-    ctx.state[i] = 0
-
-  for i in static(0 ..< 16):
-    ctx.checksum[i] = 0
+  # zerofill ctx's state
+  zeroMem(addr ctx.state[0], 48)
+  # zerofill ctx's checksum
+  zeroMem(addr ctx.checksum[0], 16)
+  # zerofill ctx's buffer
+  zeroMem(addr ctx.buffer[0], 16)
 
 # md2 input core
 template md2InputC(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
-  var i: int = 0
+  # set position variables
+  var position: int = 0
+
+  # set input length
   let inputLen: int = input.len
 
-  while i < inputLen:
-    let index: int = ctx.count
-    ctx.buffer[index] = input[i]
-    ctx.count = (index + 1)
+  # if ctx's count is bigger then zero
+  if ctx.count > 0:
+    # set mount to take
+    let take: int = min(inputLen, 16 - ctx.count)
+    # copy input to ctx.buffer[count]
+    copyMem(addr ctx.buffer[ctx.count], unsafeAddr input[0], take)
+    # add take to position and ctx.count
+    ctx.count += take
+    position += take
 
+    # if count is 16
     if ctx.count == 16:
-      md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.buffer))
+      # call md2 transform template
+      md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
+      # set count to zero
       ctx.count = 0
 
-    i.inc
+  # while position is smaller then input length - 16
+  while position <= inputLen - 16:
+    # call md2 transform template
+    md2Transform(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input[position]))
+    # add 16(block size) to position
+    position += 16
+
+  # calculate rest
+  let rest: int = inputLen - position
+  # if rest is bigger then 0
+  if rest > 0:
+    # copy input to ctx.buffer
+    copyMem(addr ctx.buffer[0], addr input[position], rest)
+    # set ctx.count to rest
+    ctx.count = rest
 
 # md2 final core
 template md2FinalC(ctx: var MD2Ctx): array[16, uint8] =
+  # declare output
   var output: array[16, uint8]
+  # padding length
   let padLen = 16 - ctx.count
-  let pad = Padding[padLen - 1]
-  md2InputC(ctx, pad)
+  # set padding value
+  let padValue: uint8 = uint8(padLen)
 
-  md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.checksum))
+  # add padding
+  for i in ctx.count ..< 16:
+    ctx.buffer[i] = padValue
 
-  for i in static(0 ..< 16):
-    output[i] = ctx.state[i]
+  # call md2 transform template by buffer
+  md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
 
-  # if --defined(antiForensic) is valid, initialize ctx for security
-  when defined(antiForensic):
-    md2InitC(ctx)
+  # call md2 transform template by checksum
+  md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.checksum[0]))
+
+  # copy ctx.state to output
+  copyMem(addr output[0], addr ctx.state[0], 16)
 
   output
 
