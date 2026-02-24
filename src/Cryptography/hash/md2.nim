@@ -2,6 +2,7 @@ import ../../../../Utility/src/Utility/codeutils/indexutils
 import ../../../../Utility/src/Utility/codeutils/bits
 import ../../../../Utility/src/Utility/codeutils/errorutils
 import ../../../../Utility/src/Utility/dataformat/dataformat
+import std/[monotimes, times]
 
 type
   MD2Ctx* = object
@@ -41,9 +42,27 @@ const Padding: array[16, array[16, uint8]] = (block:
       p[i-1][j] = i.uint8
   p
 )
-
+#[
 # md2 transform part
 template md2Transform(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
+  for i in static(0 ..< 16):
+    ctx.state[i + 16] = input[i]
+    ctx.state[i + 32] = ctx.state[i] xor input[i]
+
+  var t: uint8 = 0.uint8
+  for i in static(0 ..< 18):
+    for j in static(0 ..< 48):
+      ctx.state[j] = ctx.state[j] xor PISubst[t.int]
+      t = ctx.state[j]
+    t = (t + i.uint8) and 0xFF'u8
+
+  var l: uint8 = ctx.checksum[15]
+  for i in static(0 ..< 16):
+    ctx.checksum[i] = ctx.checksum[i] xor PISubst[(input[i] xor l).int]
+    l = ctx.checksum[i]
+]#
+# md2 transform part
+template md2Transform(ctx: var MD2Ctx, input: ptr UncheckedArray[uint8]): void =
   for i in static(0 ..< 16):
     ctx.state[i + 16] = input[i]
     ctx.state[i + 32] = ctx.state[i] xor input[i]
@@ -80,7 +99,7 @@ template md2InputC(ctx: var MD2Ctx, input: lent openArray[uint8]): void =
     ctx.count = (index + 1)
 
     if ctx.count == 16:
-      md2Transform(ctx, ctx.buffer)
+      md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.buffer))
       ctx.count = 0
 
     i.inc
@@ -92,7 +111,7 @@ template md2FinalC(ctx: var MD2Ctx): array[16, uint8] =
   let pad = Padding[padLen - 1]
   md2InputC(ctx, pad)
 
-  md2Transform(ctx, ctx.checksum)
+  md2Transform(ctx, cast[ptr UncheckedArray[uint8]](addr ctx.checksum))
 
   for i in static(0 ..< 16):
     output[i] = ctx.state[i]
@@ -124,9 +143,21 @@ else:
 # test code
 when defined(test):
   var s: seq[uint8] = charToBin("Hello, World!")
-  var ctx: MD2Ctx
-  md2Init(ctx)
-  md2Input(ctx, s)
-  echo "MD2Stream : ", binToHex(md2Final(ctx))
+  var ctx1: MD2Ctx
+  md2Init(ctx1)
+  md2Input(ctx1, s)
+  echo "MD2Stream : ", binToHex(md2Final(ctx1))
   echo "MD2 Standard : 1C8F1E6A94AAA7145210BF90BB52871A"
   echo "Input : Hello, World!"
+  template benchmark(name: string, code: untyped) =
+    let start = getMonoTime()
+    code
+    let elapsed = getMonoTime() - start
+    echo name, " took: ", elapsed.inMicroseconds, " μs (", elapsed.inNanoseconds, " ns)"
+  var a: array[16, uint8]
+  var ctx2: MD2Ctx
+  md2Init(ctx2)
+  benchmark("MD2 Benchamark"):
+    for i in 1 .. 1_000_000:
+      md2Input(ctx2, a)
+      a = md2Final(ctx2)
