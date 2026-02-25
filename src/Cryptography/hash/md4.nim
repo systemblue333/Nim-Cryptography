@@ -14,21 +14,21 @@ when Bits == 64:
   type
     MD4Ctx* = object
       state*: array[4, uint32]
-      count*: uint64
+      length*: uint64
       buffer*: array[64, uint8]
 elif Bits == 32:
   # md4 context for 32 bits
   type
     MD4Ctx* = object
       state*: array[4, uint32]
-      count*: array[2, uint32]
+      length*: array[2, uint32]
       buffer*: array[64, uint8]
 else:
   # md4 context for 8/16 bits
   type
     MD4Ctx* = object
       state*: array[16, uint8]
-      count*: array[8, uint8]
+      length*: array[8, uint8]
       buffer*: array[64, uint8]
 
 # Padding : precalculated padding list
@@ -83,12 +83,12 @@ when Bits == 64 or Bits == 32:
   # md4 init core
   template md4InitC(ctx: var MD4Ctx): void =
     when Bits == 64:
-      ctx.count = 0'u64
+      ctx.length = 0'u64
     elif Bits == 32:
-      ctx.count[0] = 0'u32
-      ctx.count[1] = 0'u32
+      ctx.length[0] = 0'u32
+      ctx.length[1] = 0'u32
 
-    # initialize state
+    # initialize state by initialize vector
     ctx.state[0] = 0x67452301'u32
     ctx.state[1] = 0xefcdab89'u32
     ctx.state[2] = 0x98badcfe'u32
@@ -103,11 +103,13 @@ when Bits == 64 or Bits == 32:
     template md4TransformP(state: var array[4, uint32], input: ptr UncheckedArray[uint8]): void =
       var chunk: ptr UncheckedArray[uint32] = cast[ptr UncheckedArray[uint32]](input)
 
+      # declare and initialize temporary variables
       var a: uint32 = state[0]
       var b: uint32 = state[1]
       var c: uint32 = state[2]
       var d: uint32 = state[3]
 
+      # call FF round template
       FF(a, b, c, d, chunk[ 0], S[ 0])
       FF(d, a, b, c, chunk[ 1], S[ 1])
       FF(c, d, a, b, chunk[ 2], S[ 2])
@@ -125,6 +127,7 @@ when Bits == 64 or Bits == 32:
       FF(c, d, a, b, chunk[14], S[14])
       FF(b, c, d, a, chunk[15], S[15])
 
+      # call GG round template
       GG(a, b, c, d, chunk[ 0], S[16])
       GG(d, a, b, c, chunk[ 4], S[17])
       GG(c, d, a, b, chunk[ 8], S[18])
@@ -142,6 +145,7 @@ when Bits == 64 or Bits == 32:
       GG(c, d, a, b, chunk[11], S[30])
       GG(b, c, d, a, chunk[15], S[31])
 
+      # call HH round template
       HH(a, b, c, d, chunk[ 0], S[32])
       HH(d, a, b, c, chunk[ 8], S[33])
       HH(c, d, a, b, chunk[ 4], S[34])
@@ -159,6 +163,7 @@ when Bits == 64 or Bits == 32:
       HH(c, d, a, b, chunk[ 7], S[46])
       HH(b, c, d, a, chunk[15], S[47])
 
+      # add and assign temporary variables to
       state[0] += a
       state[1] += b
       state[2] += c
@@ -166,15 +171,19 @@ when Bits == 64 or Bits == 32:
 
   # md4 transform part for big endian
   template md4Transform(state: var array[4, uint32], input: openArray[uint8]): void =
+    # declare chunk
     var chunk: array[16, uint32]
 
+    # decode input to chunk
     decodeLE(input, chunk, 16)
 
+    # declare and initialize temporary variables
     var a: uint32 = state[0]
     var b: uint32 = state[1]
     var c: uint32 = state[2]
     var d: uint32 = state[3]
 
+    # call FF round template
     FF(a, b, c, d, chunk[ 0], S[ 0])
     FF(d, a, b, c, chunk[ 1], S[ 1])
     FF(c, d, a, b, chunk[ 2], S[ 2])
@@ -192,6 +201,7 @@ when Bits == 64 or Bits == 32:
     FF(c, d, a, b, chunk[14], S[14])
     FF(b, c, d, a, chunk[15], S[15])
 
+    # call GG round template
     GG(a, b, c, d, chunk[ 0], S[16])
     GG(d, a, b, c, chunk[ 4], S[17])
     GG(c, d, a, b, chunk[ 8], S[18])
@@ -209,6 +219,7 @@ when Bits == 64 or Bits == 32:
     GG(c, d, a, b, chunk[11], S[30])
     GG(b, c, d, a, chunk[15], S[31])
 
+    # call HH round template
     HH(a, b, c, d, chunk[ 0], S[32])
     HH(d, a, b, c, chunk[ 8], S[33])
     HH(c, d, a, b, chunk[ 4], S[34])
@@ -226,38 +237,43 @@ when Bits == 64 or Bits == 32:
     HH(c, d, a, b, chunk[ 7], S[46])
     HH(b, c, d, a, chunk[15], S[47])
 
+    # add and assign temporary variables to state
     state[0] += a
     state[1] += b
     state[2] += c
     state[3] += d
+
   # md4 input core
   template md4InputC(ctx: var MD4Ctx, input: lent openArray[uint8]): void =
+    # set inputLen, index and add inputLen to ctx.length
     when Bits == 64:
       var inputLen: int = input.len
-      var index: uint32 = uint32((ctx.count shr 3) and 0x3F'u64)
-      ctx.count += inputLen.uint64 shl 3
-    else:
-      var index: uint32 = (ctx.count[0] shr 3) and 0x3F'u32
-
-      ctx.count[0] += uint32(input.len shl 3)
-      if ctx.count[0] < uint32(input.len shl 3):
-        ctx.count[1] += 1
-      ctx.count[1] += uint32(input.len shr 29)
+      var index: int = int(ctx.length and 0x3F'u64)
+      ctx.length += inputLen.uint64
+    elif Bits == 32:
+      var index: int = int(ctx.length[0] and 0x3F'u32)
       var inputLen: int = input.len
+      ctx.length[0] += inputLen.uint32
+      if ctx.length[0] < inputLen.uint32:
+        ctx.length[1] += 1
 
-    let partLen: int = 64 - index.int
+    # set partLen
+    let partLen: int = 64 - index
 
     var i: int = 0
 
     if inputLen >= partLen:
-      for i in 0 ..< partLen:
-        ctx.buffer[index.int + i] = input[i]
+      copyMem(addr ctx.buffer[index], unsafeAddr input[0], partLen)
+      #for i in 0 ..< partLen:
+      #  ctx.buffer[index + i] = input[i]
+      # call md4 transform template
       when cpuEndian == littleEndian:
         md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
       else:
         md4Transform(ctx.state, ctx.buffer)
 
       i = partLen
+      # loop whil inputLen
       while i + 63 < inputLen:
         md4Transform(ctx.state, input[i..i+63])
 
@@ -265,47 +281,63 @@ when Bits == 64 or Bits == 32:
       index = 0
 
     if i < inputLen:
-      for j in 0 ..< (inputLen - i):
-        ctx.buffer[index.int + j] = input[i + j]
+      #for j in 0 ..< (inputLen - i):
+      #  ctx.buffer[index + j] = input[i + j]
+      copyMem(addr ctx.buffer[index], unsafeAddr input[i], inputLen - i)
 
   # md4 final core
   template md4FinalC(ctx: var MD4Ctx): array[16, uint8] =
+    # declare output
     var output: array[16, uint8]
-    var bits: array[8, uint8]
 
+    # set index
     when Bits == 64:
-      toBytesLE(ctx.count, bits)
-    else:
-      encodeLE(ctx.count, bits)
+      var index: int = int(ctx.length and 0x3F'u64)
+    elif Bits == 32:
+      var index: int = int(ctx.length[0] and 0x3F'u32)
 
-    when Bits == 64:
-      var index: int = int((ctx.count shr 3) and 0x3F'u64)
-    else:
-      var index: int = int((ctx.count[0] shr 3) and 0x3F'u32)
-
+    # add padding
     ctx.buffer[index] = 0x80'u8
     index.inc
 
+    # set padding length
     let padLen: int = if index < 56: 56 - index else: 64 - index
 
+    # if index is smaller then 56
     if index < 56:
+      # zerofill buffer until 56
       zeroMem(addr ctx.buffer[index], padLen)
     else:
+      # zerofill buffer until 64
       zeroMem(addr ctx.buffer[index], padLen)
+      # call md4 transform template by endian
       when cpuEndian == littleEndian:
         md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
       else:
         md4Transform(ctx.state, ctx.buffer)
 
+      # zerofill buffer until 56
       zeroMem(addr ctx.buffer[0], 56)
 
-    for i in static(0 ..< 8):
-      ctx.buffer[56 + i] = bits[i]
+    # multiple 8 to ctx.length and copy to ctx.buffer
+    when Bits == 64:
+      ctx.length = ctx.length shl 3
+      discard toBytesLE(ctx.length, ctx.buffer.toOpenArray(56, 63))
+    elif Bits == 32:
+      ctx.length[1] = (ctx.length[0] shr 29) or (ctx.length[1] shl 3)
+      ctx.length[0] = ctx.length[0] shl 3
+      encodeLE(ctx.length, ctx.buffer.toOpenArray(56, 63), 8)
 
+    #for i in static(0 ..< 8):
+    #  ctx.buffer[56 + i] = bitLen[i]
+
+    # call md4 transform template by endian
     when cpuEndian == littleEndian:
       md4TransformP(ctx.state, cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0]))
     else:
       md4Transform(ctx.state, ctx.buffer)
+
+    # encode state to output
     encodeLE(ctx.state, output)
 
     output
@@ -334,6 +366,7 @@ else:
     proc md4Final*(ctx: var MD4Ctx): array[16, uint8] =
       md4FinalC(ctx)
 
+# test code
 when defined(test):
   var s: seq[uint8] = charToBin("Hello, World!")
   var ctx: MD4Ctx
