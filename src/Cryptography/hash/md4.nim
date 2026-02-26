@@ -348,23 +348,15 @@ when defined(templateOpt):
     md4InitC(ctx)
   template md4Input*(ctx: var MD4Ctx, input: lent openArray[uint8]): void =
     md4InputC(ctx, input)
-  when defined(varOpt):
-    template md4Fianl*(ctx: var MD4Ctx, output: var array[16, uint8]): void =
-      output = md4FinalC(ctx)
-  else:
-    template md4Final*(ctx: var MD4Ctx): array[16, uint8] =
-      md4FinalC(ctx)
+  template md4Final*(ctx: var MD4Ctx): array[16, uint8] =
+    md4FinalC(ctx)
 else:
   proc md4Init*(ctx: var MD4Ctx): void =
     md4InitC(ctx)
   proc md4Input*(ctx: var MD4Ctx, input: openArray[uint8]): void =
     md4InputC(ctx, input)
-  when defined(varOpt):
-    proc md4Fianl*(ctx: var MD4Ctx, output: var array[16, uint8]): void =
-      output = md4FinalC(ctx)
-  else:
-    proc md4Final*(ctx: var MD4Ctx): array[16, uint8] =
-      md4FinalC(ctx)
+  proc md4Final*(ctx: var MD4Ctx): array[16, uint8] =
+    md4FinalC(ctx)
 
 # test code
 when defined(test):
