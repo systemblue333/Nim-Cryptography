@@ -7,8 +7,135 @@ import ../../../../Utility/src/Utility/dataformat/dataformat
 import bitops
 import std/[monotimes, times]
 
+# extend chunk
+template extend(chunk: var array[16, uint32], i: int): uint32 =
+  let index = i and 15
+  chunk[index] = chunk[(index + 13) and 15] xor chunk[(index + 8) and 15] xor chunk[(index + 2) and 15] xor chunk[index]
+  chunk[index]
+
+# round 0 template : with out chunk extend
+template round0(a, b, c, d, e: var uint32, x: var array[16, uint32], i: int): void =
+  e += (b and (c xor d) xor d) + x[i] + 0x5A827999'u32 + rotateLeftBits(a, 5)
+  b = rotateLeftBits(b, 30)
+
+# round 1 template : include chunk extend
+template round1(a, b, c, d, e: var uint32, x: var array[16, uint32], i: int): void =
+  e += (b and (c xor d) xor d) + extend(x, i) + 0x5A827999'u32 + rotateLeftBits(a, 5)
+  b = rotateLeftBits(b, 30)
+
+# round 2 template
+template round2(a, b, c, d, e: var uint32, x: var array[16, uint32], i: int): void =
+  e += (b xor c xor d) + extend(x, i) + 0x6ED9EBA1'u32 + rotateLeftBits(a, 5)
+  b = rotateLeftBits(b, 30)
+
+# round 3 template
+template round3(a, b, c, d, e: var uint32, x: var array[16, uint32], i: int): void =
+  e += (((b or c) and d) or (b and c)) + extend(x, i) + 0x8F1BBCDC'u32 + rotateLeftBits(a, 5)
+  b = rotateLeftBits(b, 30)
+
+# round 4 template
+template round4(a, b, c, d, e: var uint32, x: var array[16, uint32], i: int): void =
+  e += (b xor c xor d) + extend(x, i) + 0xCA62C1D6'u32 + rotateLeftBits(a, 5)
+  b = rotateLeftBits(b, 30)
+
+
 # common sha0 operating process template
 template sha0Transform(state: var array[5, uint32], input: lent openArray[uint8]): void =
+  # declare extended chunk
+  var chunk: array[16, uint32]
+
+  # declare and initialize temporary variables
+  var a: uint32 = state[0]
+  var b: uint32 = state[1]
+  var c: uint32 = state[2]
+  var d: uint32 = state[3]
+  var e: uint32 = state[4]
+
+  # decode chunk to extended chunk(w)
+  decodeBE(input, chunk.toOpenArray(0, 15), 16)
+
+  # call round template
+  round0(a, b, c, d, e, chunk, 0)
+  round0(e, a, b, c, d, chunk, 1)
+  round0(d, e, a, b, c, chunk, 2)
+  round0(c, d, e, a, b, chunk, 3)
+  round0(b, c, d, e, a, chunk, 4)
+  round0(a, b, c, d, e, chunk, 5)
+  round0(e, a, b, c, d, chunk, 6)
+  round0(d, e, a, b, c, chunk, 7)
+  round0(c, d, e, a, b, chunk, 8)
+  round0(b, c, d, e, a, chunk, 9)
+  round0(a, b, c, d, e, chunk, 10)
+  round0(e, a, b, c, d, chunk, 11)
+  round0(d, e, a, b, c, chunk, 12)
+  round0(c, d, e, a, b, chunk, 13)
+  round0(b, c, d, e, a, chunk, 14)
+  round0(a, b, c, d, e, chunk, 15)
+  round1(e, a, b, c, d, chunk, 16)
+  round1(d, e, a, b, c, chunk, 17)
+  round1(c, d, e, a, b, chunk, 18)
+  round1(b, c, d, e, a, chunk, 19)
+  round2(a, b, c, d, e, chunk, 20)
+  round2(e, a, b, c, d, chunk, 21)
+  round2(d, e, a, b, c, chunk, 22)
+  round2(c, d, e, a, b, chunk, 23)
+  round2(b, c, d, e, a, chunk, 24)
+  round2(a, b, c, d, e, chunk, 25)
+  round2(e, a, b, c, d, chunk, 26)
+  round2(d, e, a, b, c, chunk, 27)
+  round2(c, d, e, a, b, chunk, 28)
+  round2(b, c, d, e, a, chunk, 29)
+  round2(a, b, c, d, e, chunk, 30)
+  round2(e, a, b, c, d, chunk, 31)
+  round2(d, e, a, b, c, chunk, 32)
+  round2(c, d, e, a, b, chunk, 33)
+  round2(b, c, d, e, a, chunk, 34)
+  round2(a, b, c, d, e, chunk, 35)
+  round2(e, a, b, c, d, chunk, 36)
+  round2(d, e, a, b, c, chunk, 37)
+  round2(c, d, e, a, b, chunk, 38)
+  round2(b, c, d, e, a, chunk, 39)
+  round3(a, b, c, d, e, chunk, 40)
+  round3(e, a, b, c, d, chunk, 41)
+  round3(d, e, a, b, c, chunk, 42)
+  round3(c, d, e, a, b, chunk, 43)
+  round3(b, c, d, e, a, chunk, 44)
+  round3(a, b, c, d, e, chunk, 45)
+  round3(e, a, b, c, d, chunk, 46)
+  round3(d, e, a, b, c, chunk, 47)
+  round3(c, d, e, a, b, chunk, 48)
+  round3(b, c, d, e, a, chunk, 49)
+  round3(a, b, c, d, e, chunk, 50)
+  round3(e, a, b, c, d, chunk, 51)
+  round3(d, e, a, b, c, chunk, 52)
+  round3(c, d, e, a, b, chunk, 53)
+  round3(b, c, d, e, a, chunk, 54)
+  round3(a, b, c, d, e, chunk, 55)
+  round3(e, a, b, c, d, chunk, 56)
+  round3(d, e, a, b, c, chunk, 57)
+  round3(c, d, e, a, b, chunk, 58)
+  round3(b, c, d, e, a, chunk, 59)
+  round4(a, b, c, d, e, chunk, 60)
+  round4(e, a, b, c, d, chunk, 61)
+  round4(d, e, a, b, c, chunk, 62)
+  round4(c, d, e, a, b, chunk, 63)
+  round4(b, c, d, e, a, chunk, 64)
+  round4(a, b, c, d, e, chunk, 65)
+  round4(e, a, b, c, d, chunk, 66)
+  round4(d, e, a, b, c, chunk, 67)
+  round4(c, d, e, a, b, chunk, 68)
+  round4(b, c, d, e, a, chunk, 69)
+  round4(a, b, c, d, e, chunk, 70)
+  round4(e, a, b, c, d, chunk, 71)
+  round4(d, e, a, b, c, chunk, 72)
+  round4(c, d, e, a, b, chunk, 73)
+  round4(b, c, d, e, a, chunk, 74)
+  round4(a, b, c, d, e, chunk, 75)
+  round4(e, a, b, c, d, chunk, 76)
+  round4(d, e, a, b, c, chunk, 77)
+  round4(c, d, e, a, b, chunk, 78)
+  round4(b, c, d, e, a, chunk, 79)
+#[
   # declare extended chunk
   var w: array[80, uint32]
 
@@ -50,7 +177,7 @@ template sha0Transform(state: var array[5, uint32], input: lent openArray[uint8]
     c = rotateLeftBits(b, 30)
     b = a
     a = temp
-
+]#
   # assign and add temporary variable to state
   state[0] += a
   state[1] += b
