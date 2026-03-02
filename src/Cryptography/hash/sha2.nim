@@ -73,101 +73,174 @@ template padding512(input: var seq[uint8], bitLen: lent uint64): void =
   for i in countdown(7, 0):
     input.add(uint8((bitLen shr (i * 8)) and 0xFF))
 
+# chunk extend template for 512 series
+template extend256(chunk: var array[16, uint32], index: int): uint32 =
+  let i: int = index and 15
+  let s0: uint32 = rotateRightBits(chunk[(i + 1) and 15], 7) xor rotateRightBits(chunk[(i + 1) and 15], 18) xor (chunk[(i + 1) and 15] shr 3)
+  let s1: uint32 = rotateRightBits(chunk[(i + 14) and 15], 17) xor rotateRightBits(chunk[(i + 14) and 15], 19) xor (chunk[(i + 14) and 15] shr 10)
+  chunk[i] = chunk[i] + s0 + chunk[(i + 9) and 15] + s1
+  chunk[i]
+
+# pre-round template for 512 seriess
+template preround256(a, b, c, d, e, f, g, h: var uint32, w: var array[16, uint32], index: int): void =
+  let s1: uint32 = rotateRightBits(e, 6) xor rotateRightBits(e, 11) xor rotateRightBits(e, 25)
+  let ch: uint32 = (e and f) xor ((not e) and g)
+  let temp1: uint32 = h + s1 + ch + K256[index] + w[index]
+
+  let s0: uint32 = rotateRightBits(a, 2) xor rotateRightBits(a, 13) xor rotateRightBits(a, 22)
+  let maj: uint32 = (a and b) xor (a and c) xor (b and c)
+  let temp2: uint32 = s0 + maj
+
+  d += temp1
+  h = temp1 + temp2
+
+# round template for 512 series
+template round256(a, b, c, d, e, f, g, h: var uint32, w: var array[16, uint32], index: int): void =
+  let s1: uint32 = rotateRightBits(e, 6) xor rotateRightBits(e, 11) xor rotateRightBits(e, 25)
+  let ch: uint32 = (e and f) xor ((not e) and g)
+  let temp1: uint32 = h + s1 + ch + K256[index] + extend256(w, index)
+
+  let s0: uint32 = rotateRightBits(a, 2) xor rotateRightBits(a, 13) xor rotateRightBits(a, 22)
+  let maj: uint32 = (a and b) xor (a and c) xor (b and c)
+  let temp2: uint32 = s0 + maj
+
+  d += temp1
+  h = temp1 + temp2
+
 # processing part for 256 series
-template sha2Transform256(state: var array[8, uint32], chunk: lent openArray[uint8]): void =
-  # declare w
-  var w: array[64, uint32]
+template sha2Transform256(state: var array[8, uint32], input: lent openArray[uint8]): void =
+  # declare chunk
+  var chunk: array[16, uint32]
 
-  # decode chunk to w
-  # static is for deploying loop in compile time
-  for i in static(0..<16):
-    w[i] = (uint32(chunk[i * 4]) shl 24) or
-    (uint32(chunk[i * 4 + 1]) shl 16) or
-    (uint32(chunk[i * 4 + 2]) shl 8) or
-    uint32(chunk[i * 4 + 3])
+  # decode input to chunk
+  decodeBE(input, chunk, 16)
 
-  # extending w by rotate
-  for i in static(16..<64):
-    let s0 = rotateRightBits(w[i - 15], 7) xor rotateRightBits(w[i - 15], 18) xor (w[i - 15] shr 3)
-    let s1 = rotateRightBits(w[i - 2], 17) xor rotateRightBits(w[i - 2], 19) xor (w[i - 2] shr 10)
-    w[i] = w[i - 16] + s0 + w[i - 7] + s1
+  # declare and initialize temporary variables
+  var a: uint32 = state[0]
+  var b: uint32 = state[1]
+  var c: uint32 = state[2]
+  var d: uint32 = state[3]
+  var e: uint32 = state[4]
+  var f: uint32 = state[5]
+  var g: uint32 = state[6]
+  var h: uint32 = state[7]
 
-  # declare temporary array and assign state
-  var temp: array[8, uint32]
-  for i in static(0 ..< 8):
-    temp[i] = state[i]
+  # call pre-round template(not include extend template) : 0 ~ 15
+  for i in static(0 ..< 2):
+    preround256(a, b, c, d, e, f, g, h, chunk, i * 8 + 0)
+    preround256(h, a, b, c, d, e, f, g, chunk, i * 8 + 1)
+    preround256(g, h, a, b, c, d, e, f, chunk, i * 8 + 2)
+    preround256(f, g, h, a, b, c, d, e, chunk, i * 8 + 3)
+    preround256(e, f, g, h, a, b, c, d, chunk, i * 8 + 4)
+    preround256(d, e, f, g, h, a, b, c, chunk, i * 8 + 5)
+    preround256(c, d, e, f, g, h, a, b, chunk, i * 8 + 6)
+    preround256(b, c, d, e, f, g, h, a, chunk, i * 8 + 7)
 
-  # round process : 64 round of ARX operation(256 series)
-  for i in static(0..<64):
-    let s1 = rotateRightBits(temp[4], 6) xor rotateRightBits(temp[4], 11) xor rotateRightBits(temp[4], 25)
-    let ch = (temp[4] and temp[5]) xor ((not temp[4]) and temp[6])
-    let temp1 = temp[7] + s1 + ch + K256[i] + w[i]
-    let s0 = rotateRightBits(temp[0], 2) xor rotateRightBits(temp[0], 13) xor rotateRightBits(temp[0], 22)
-    let maj = (temp[0] and temp[1]) xor (temp[0] and temp[2]) xor (temp[1] and temp[2])
-    let temp2 = s0 + maj
+  # call round template(include extend template) : 16 ~ 63
+  for i in static(2 ..< 8):
+    round256(a, b, c, d, e, f, g, h, chunk, i * 8 + 0)
+    round256(h, a, b, c, d, e, f, g, chunk, i * 8 + 1)
+    round256(g, h, a, b, c, d, e, f, chunk, i * 8 + 2)
+    round256(f, g, h, a, b, c, d, e, chunk, i * 8 + 3)
+    round256(e, f, g, h, a, b, c, d, chunk, i * 8 + 4)
+    round256(d, e, f, g, h, a, b, c, chunk, i * 8 + 5)
+    round256(c, d, e, f, g, h, a, b, chunk, i * 8 + 6)
+    round256(b, c, d, e, f, g, h, a, chunk, i * 8 + 7)
 
-    temp[7] = temp[6]
-    temp[6] = temp[5]
-    temp[5] = temp[4]
-    temp[4] = temp[3] + temp1
-    temp[3] = temp[2]
-    temp[2] = temp[1]
-    temp[1] = temp[0]
-    temp[0] = temp1 + temp2
+  # add and assign temporary variables to state
+  state[0] += a
+  state[1] += b
+  state[2] += c
+  state[3] += d
+  state[4] += e
+  state[5] += f
+  state[6] += g
+  state[7] += h
 
-  # add and assign temporary variable to H
-  for i in static(0 ..< 8):
-    state[i] += temp[i]
+# chunk extend template for 512 series
+template extend512(chunk: var array[16, uint64], index: int): uint64 =
+  let i: int = index and 15
+  let s0: uint64 = rotateRightBits(chunk[(i + 1) and 15], 1) xor rotateRightBits(chunk[(i + 1) and 15], 8) xor (chunk[(i + 1) and 15] shr 7)
+  let s1: uint64 = rotateRightBits(chunk[(i + 14) and 15], 19) xor rotateRightBits(chunk[(i + 14) and 15], 61) xor (chunk[(i + 14) and 15] shr 6)
+
+  chunk[i] = chunk[i] + s0 + chunk[(i + 9) and 15] + s1
+  chunk[i]
+
+# pre-round template for 512 series
+template preround512(a, b, c, d, e, f, g, h: var uint64, w: var array[16, uint64], index: int): void =
+  let s1: uint64 = rotateRightBits(e, 14) xor rotateRightBits(e, 18) xor rotateRightBits(e, 41)
+  let ch: uint64 = (e and f) xor ((not e) and g)
+  let temp1: uint64 = h + s1 + ch + K512[index] + w[index]
+
+  let s0: uint64 = rotateRightBits(a, 28) xor rotateRightBits(a, 34) xor rotateRightBits(a, 39)
+  let maj: uint64 = (a and b) xor (a and c) xor (b and c)
+  let temp2: uint64 = s0 + maj
+
+  d += temp1
+  h = temp1 + temp2
+
+# round template for 512 series
+template round512(a, b, c, d, e, f, g, h: var uint64, w: var array[16, uint64], index: int): void =
+  let s1: uint64 = rotateRightBits(e, 14) xor rotateRightBits(e, 18) xor rotateRightBits(e, 41)
+  let ch: uint64 = (e and f) xor ((not e) and g)
+  let temp1: uint64 = h + s1 + ch + K512[index] + extend512(w, index)
+
+  let s0: uint64 = rotateRightBits(a, 28) xor rotateRightBits(a, 34) xor rotateRightBits(a, 39)
+  let maj: uint64 = (a and b) xor (a and c) xor (b and c)
+  let temp2: uint64 = s0 + maj
+
+  d += temp1
+  h = temp1 + temp2
 
 # processing part for 512 series
-template sha2Transform512(state: var array[8, uint64], chunk: lent openArray[uint8]): void =
-  # declaring w
-  var w: array[80, uint64]
+template sha2Transform512(state: var array[8, uint64], input: lent openArray[uint8]): void =
+  # declare chunk
+  var chunk: array[16, uint64]
 
-  # decode chunk to w
-  # static is for deploying loop in compile time
-  for i in static(0..<16):
-    w[i] = (uint64(chunk[i * 8]) shl 56) or
-    (uint64(chunk[i * 8 + 1]) shl 48) or
-    (uint64(chunk[i * 8 + 2]) shl 40) or
-    (uint64(chunk[i * 8 + 3]) shl 32) or
-    (uint64(chunk[i * 8 + 4]) shl 24) or
-    (uint64(chunk[i * 8 + 5]) shl 16) or
-    (uint64(chunk[i * 8 + 6]) shl 8) or
-    uint64(chunk[i * 8 + 7])
+  # decode input to chunk
+  decodeBE(input, chunk, 16)
 
-  # extending w by rotate
-  for i in static(16..<80):
-    let s0 = rotateRightBits(w[i - 15], 1) xor rotateRightBits(w[i - 15], 8) xor (w[i - 15] shr 7)
-    let s1 = rotateRightBits(w[i - 2], 19) xor rotateRightBits(w[i - 2], 61) xor (w[i - 2] shr 6)
-    w[i] = w[i - 16] + s0 + w[i - 7] + s1
+  # declare and initialize temporary variables
+  var a: uint64 = state[0]
+  var b: uint64 = state[1]
+  var c: uint64 = state[2]
+  var d: uint64 = state[3]
+  var e: uint64 = state[4]
+  var f: uint64 = state[5]
+  var g: uint64 = state[6]
+  var h: uint64 = state[7]
 
-  # declare temporary variables and assign state
-  var temp: array[8, uint64]
-  for i in static(0 ..< 8):
-    temp[i] = state[i]
+  # call pre-round template(not include extend template) : 0 ~ 15
+  for i in static(0 ..< 2):
+    preround512(a, b, c, d, e, f, g, h, chunk, i * 8 + 0)
+    preround512(h, a, b, c, d, e, f, g, chunk, i * 8 + 1)
+    preround512(g, h, a, b, c, d, e, f, chunk, i * 8 + 2)
+    preround512(f, g, h, a, b, c, d, e, chunk, i * 8 + 3)
+    preround512(e, f, g, h, a, b, c, d, chunk, i * 8 + 4)
+    preround512(d, e, f, g, h, a, b, c, chunk, i * 8 + 5)
+    preround512(c, d, e, f, g, h, a, b, chunk, i * 8 + 6)
+    preround512(b, c, d, e, f, g, h, a, chunk, i * 8 + 7)
 
-  # round process : 80 round of ARX operation(512 series)
-  for i in static(0..<80):
-    let s1 = rotateRightBits(temp[4], 14) xor rotateRightBits(temp[4], 18) xor rotateRightBits(temp[4], 41)
-    let ch = (temp[4] and temp[5]) xor ((not temp[4]) and temp[6])
-    let temp1 = temp[7] + s1 + ch + K512[i] + w[i]
-    let s0 = rotateRightBits(temp[0], 28) xor rotateRightBits(temp[0], 34) xor rotateRightBits(temp[0], 39)
-    let maj = (temp[0] and temp[1]) xor (temp[0] and temp[2]) xor (temp[1] and temp[2])
-    let temp2 = s0 + maj
+  # call round template(include extend template) : 16 ~ 79
+  for i in static(2 ..< 10):
+    round512(a, b, c, d, e, f, g, h, chunk, i * 8 + 0)
+    round512(h, a, b, c, d, e, f, g, chunk, i * 8 + 1)
+    round512(g, h, a, b, c, d, e, f, chunk, i * 8 + 2)
+    round512(f, g, h, a, b, c, d, e, chunk, i * 8 + 3)
+    round512(e, f, g, h, a, b, c, d, chunk, i * 8 + 4)
+    round512(d, e, f, g, h, a, b, c, chunk, i * 8 + 5)
+    round512(c, d, e, f, g, h, a, b, chunk, i * 8 + 6)
+    round512(b, c, d, e, f, g, h, a, chunk, i * 8 + 7)
 
-    temp[7] = temp[6]
-    temp[6] = temp[5]
-    temp[5] = temp[4]
-    temp[4] = temp[3] + temp1
-    temp[3] = temp[2]
-    temp[2] = temp[1]
-    temp[1] = temp[0]
-    temp[0] = temp1 + temp2
-
-  # add and assign temporary variables to h
-  for i in static(0 ..< 8):
-    state[i] += temp[i]
+  # add and assign temporary variables to state
+  state[0] += a
+  state[1] += b
+  state[2] += c
+  state[3] += d
+  state[4] += e
+  state[5] += f
+  state[6] += g
+  state[7] += h
 
 # chunking part of 256 series
 template chunking256(state: var array[8, uint32], input: lent openArray[uint8]): void =
@@ -741,3 +814,54 @@ when defined(test):
       sha2_512_256Init(ctx512_256)
       sha2_512_256Input(ctx512_256, temp512_256)
       temp512_256 = sha2_512_256Final(ctx512_256)
+
+      #[
+  preround512(a, b, c, d, e, f, g, h, chunk, 8)
+  preround512(b, c, d, e, f, g, h, a, chunk, 9)
+  preround512(c, d, e, f, g, h, a, b, chunk, 10)
+  preround512(d, e, f, g, h, a, b, c, chunk, 11)
+  preround512(e, f, g, h, a, b, c, d, chunk, 12)
+  preround512(f, g, h, a, b, c, d, e, chunk, 13)
+  preround512(g, h, a, b, c, d, e, f, chunk, 14)
+  preround512(h, a, b, c, d, e, f, g, chunk, 15)
+  round512(a, b, c, d, e, f, g, h, chunk, 16)
+  round512(b, c, d, e, f, g, h, a, chunk, 17)
+  round512(c, d, e, f, g, h, a, b, chunk, 18)
+  round512(d, e, f, g, h, a, b, c, chunk, 19)
+  round512(e, f, g, h, a, b, c, d, chunk, 20)
+  round512(f, g, h, a, b, c, d, e, chunk, 21)
+  round512(g, h, a, b, c, d, e, f, chunk, 22)
+  round512(h, a, b, c, d, e, f, g, chunk, 23)
+  round512(a, b, c, d, e, f, g, h, chunk, 24)
+  round512(b, c, d, e, f, g, h, a, chunk, 25)
+  round512(c, d, e, f, g, h, a, b, chunk, 26)
+  round512(d, e, f, g, h, a, b, c, chunk, 27)
+  round512(e, f, g, h, a, b, c, d, chunk, 28)
+  round512(f, g, h, a, b, c, d, e, chunk, 29)
+  round512(g, h, a, b, c, d, e, f, chunk, 30)
+  round512(h, a, b, c, d, e, f, g, chunk, 31)
+  round512(a, b, c, d, e, f, g, h, chunk, 32)
+  round512(b, c, d, e, f, g, h, a, chunk, 33)
+  round512(c, d, e, f, g, h, a, b, chunk, 34)
+  round512(d, e, f, g, h, a, b, c, chunk, 35)
+  round512(e, f, g, h, a, b, c, d, chunk, 36)
+  round512(f, g, h, a, b, c, d, e, chunk, 37)
+  round512(g, h, a, b, c, d, e, f, chunk, 38)
+  round512(h, a, b, c, d, e, f, g, chunk, 39)
+  round512(a, b, c, d, e, f, g, h, chunk, 40)
+  round512(b, c, d, e, f, g, h, a, chunk, 41)
+  round512(c, d, e, f, g, h, a, b, chunk, 42)
+  round512(d, e, f, g, h, a, b, c, chunk, 43)
+  round512(e, f, g, h, a, b, c, d, chunk, 44)
+  round512(f, g, h, a, b, c, d, e, chunk, 45)
+  round512(g, h, a, b, c, d, e, f, chunk, 46)
+  round512(h, a, b, c, d, e, f, g, chunk, 47)
+  round512(a, b, c, d, e, f, g, h, chunk, 50)
+  round512(b, c, d, e, f, g, h, a, chunk, 51)
+  round512(c, d, e, f, g, h, a, b, chunk, 52)
+  round512(d, e, f, g, h, a, b, c, chunk, 53)
+  round512(e, f, g, h, a, b, c, d, chunk, 54)
+  round512(f, g, h, a, b, c, d, e, chunk, 55)
+  round512(g, h, a, b, c, d, e, f, chunk, 56)
+  round512(h, a, b, c, d, e, f, g, chunk, 57)
+]#
