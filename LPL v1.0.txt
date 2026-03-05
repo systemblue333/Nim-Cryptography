@@ -1,0 +1,71 @@
+**LPL v1.0 Contents English**
+
+1. Attribution of Original Authors and Derivatives
+
+All libraries using this license must create a separate contributor file, listing both the original authors and derivative authors of the libraries used in the software. However, if the original authors or derivative authors cannot be identified, they may be used anonymously, and legal action cannot be taken for violation of this provision.
+
+2. Contagiousness
+
+Redistribution/modification of the source code and library files of a library using this license must be in full compliance with this license.
+But programs's source code which use this library by static linking, dynamic linking, and include compile(inlining and macro expansion) are not be conatagioused
+But you have to open the source code of library files when you distribute programs which use it's library.
+
+3. Reimplementation after Reference and Borrowing of Ideas
+
+Reimplementation after Reference or borrowing of ideas from a library using this license does not apply to such use, and legal action cannot be taken against such use.
+
+4. Modification and Redistribution, Modification and Redistribution
+
+Anyone may freely modify and redistribute a library using this license.
+
+5. Commercialization
+
+Anyone is free to commercialize any library that uses this license.
+
+6. Patents
+
+No one may assert patents on any library that uses this license.
+
+7. Use
+
+Anyone is free to use any library that uses this license. (Exceptions are described below.)
+
+8. Disclosure Obligation
+
+Library using this license requires the open of its source code.
+
+**LPL v1.0 내용 국문**
+
+1.원작자 및 2차 창작자 표시
+
+이 라이선스를 사용하는 모든 라이브러리의 라이선스에는 별도의 기여자 파일을 만들어 소프트웨어가 사용한 라이브러리의 원작자와 2차 창작자를 모두 작성해야한다. 다만 원작자나 2차 창작자를 확인할 수 없을 경우 미상으로 쓸 수 있으며 또한 이 조항을 위반하였다고 법적 조치를 취하는 것은 불가능하다.
+
+2.전염성
+
+이 라이선스를 사용하는 라이브러리의 소스코드 및 라이브러리 파일 자체를 재배포/수정할 경우 이 라이선스를 그대로 따라야한다.
+이 라이브러리를 정적링킹, 동적링킹, 포함컴파일하여 사용하는 프로그램은 전염되지 않는다.
+하지만 당신은 프로그램을 배포할 때 라이브러리 파일의 소스코드는 공개해야한다.
+
+3.참고 후 재구현 및 아이디어 차용
+
+이 라이선스를 사용하는 라이브러리를 참고 후 재구현하였거나 아이디어를 차용한 경우에는 라이선스를 적용받지 않으며 이 라이선스를 사용할 경우 이에 대한 법적 조치를 취하는 것은 불가능하다.
+
+4.수정 및 재배포, 수정 후 재배포
+
+이 라이선스를 사용하는 라이브러리는 누구든지 자유롭게 수정되고 재배포 될 수 있다.
+
+5.상업화
+
+이 라이선스를 사용하는 라이브러리는 누구든지 자유롭게 어떤 형태든 상업화할 수 있다.
+
+6.특허
+
+이 라이선스를 사용하는 라이브러리는 누구든지 특허를 주장할 수 없다.
+
+7.사용
+
+이 라이선스를 사용하는 라이브러리는 누구든지 자유롭게 사용할 수 있다.(예외 조항은 하단에 서술)
+
+8.공개의무
+
+이 라이선스를 쓰는 소프트웨어는 소스코드를 공개할 의무가 있다.
