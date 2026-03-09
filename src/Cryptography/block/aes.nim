@@ -1,9 +1,545 @@
-import ../../../../Utility/src/Utility/dataformat/dataformat
-import ../../../../Utility/src/Utility/codeutils/bits
+import strutils
+import sequtils
 import ../../../../Utility/src/Utility/codeutils/indexutils
+import ../../../../Utility/src/Utility/codeutils/bits
+import ../../../../Utility/src/Utility/codeutils/errorutils
+import ../../../../Utility/src/Utility/dataformat/dataformat
+import std/[monotimes, times]
+import std/bitops
 
 const
-  SubBytesTable: array[256, uint8] = [
+  # declare T-Table for encryption
+  TE0: array[256, uint32] = [
+  0xc66363a5'u32, 0xf87c7c84'u32, 0xee777799'u32, 0xf67b7b8d'u32,
+  0xfff2f20d'u32, 0xd66b6bbd'u32, 0xde6f6fb1'u32, 0x91c5c554'u32,
+  0x60303050'u32, 0x02010103'u32, 0xce6767a9'u32, 0x562b2b7d'u32,
+  0xe7fefe19'u32, 0xb5d7d762'u32, 0x4dababe6'u32, 0xec76769a'u32,
+  0x8fcaca45'u32, 0x1f82829d'u32, 0x89c9c940'u32, 0xfa7d7d87'u32,
+  0xeffafa15'u32, 0xb25959eb'u32, 0x8e4747c9'u32, 0xfbf0f00b'u32,
+  0x41adadec'u32, 0xb3d4d467'u32, 0x5fa2a2fd'u32, 0x45afafea'u32,
+  0x239c9cbf'u32, 0x53a4a4f7'u32, 0xe4727296'u32, 0x9bc0c05b'u32,
+  0x75b7b7c2'u32, 0xe1fdfd1c'u32, 0x3d9393ae'u32, 0x4c26266a'u32,
+  0x6c36365a'u32, 0x7e3f3f41'u32, 0xf5f7f702'u32, 0x83cccc4f'u32,
+  0x6834345c'u32, 0x51a5a5f4'u32, 0xd1e5e534'u32, 0xf9f1f108'u32,
+  0xe2717193'u32, 0xabd8d873'u32, 0x62313153'u32, 0x2a15153f'u32,
+  0x0804040c'u32, 0x95c7c752'u32, 0x46232365'u32, 0x9dc3c35e'u32,
+  0x30181828'u32, 0x379696a1'u32, 0x0a05050f'u32, 0x2f9a9ab5'u32,
+  0x0e070709'u32, 0x24121236'u32, 0x1b80809b'u32, 0xdfe2e23d'u32,
+  0xcdebeb26'u32, 0x4e272769'u32, 0x7fb2b2cd'u32, 0xea75759f'u32,
+  0x1209091b'u32, 0x1d83839e'u32, 0x582c2c74'u32, 0x341a1a2e'u32,
+  0x361b1b2d'u32, 0xdc6e6eb2'u32, 0xb45a5aee'u32, 0x5ba0a0fb'u32,
+  0xa45252f6'u32, 0x763b3b4d'u32, 0xb7d6d661'u32, 0x7db3b3ce'u32,
+  0x5229297b'u32, 0xdde3e33e'u32, 0x5e2f2f71'u32, 0x13848497'u32,
+  0xa65353f5'u32, 0xb9d1d168'u32, 0x00000000'u32, 0xc1eded2c'u32,
+  0x40202060'u32, 0xe3fcfc1f'u32, 0x79b1b1c8'u32, 0xb65b5bed'u32,
+  0xd46a6abe'u32, 0x8dcbcb46'u32, 0x67bebed9'u32, 0x7239394b'u32,
+  0x944a4ade'u32, 0x984c4cd4'u32, 0xb05858e8'u32, 0x85cfcf4a'u32,
+  0xbbd0d06b'u32, 0xc5efef2a'u32, 0x4faaaae5'u32, 0xedfbfb16'u32,
+  0x864343c5'u32, 0x9a4d4dd7'u32, 0x66333355'u32, 0x11858594'u32,
+  0x8a4545cf'u32, 0xe9f9f910'u32, 0x04020206'u32, 0xfe7f7f81'u32,
+  0xa05050f0'u32, 0x783c3c44'u32, 0x259f9fba'u32, 0x4ba8a8e3'u32,
+  0xa25151f3'u32, 0x5da3a3fe'u32, 0x804040c0'u32, 0x058f8f8a'u32,
+  0x3f9292ad'u32, 0x219d9dbc'u32, 0x70383848'u32, 0xf1f5f504'u32,
+  0x63bcbcdf'u32, 0x77b6b6c1'u32, 0xafdada75'u32, 0x42212163'u32,
+  0x20101030'u32, 0xe5ffff1a'u32, 0xfdf3f30e'u32, 0xbfd2d26d'u32,
+  0x81cdcd4c'u32, 0x180c0c14'u32, 0x26131335'u32, 0xc3ecec2f'u32,
+  0xbe5f5fe1'u32, 0x359797a2'u32, 0x884444cc'u32, 0x2e171739'u32,
+  0x93c4c457'u32, 0x55a7a7f2'u32, 0xfc7e7e82'u32, 0x7a3d3d47'u32,
+  0xc86464ac'u32, 0xba5d5de7'u32, 0x3219192b'u32, 0xe6737395'u32,
+  0xc06060a0'u32, 0x19818198'u32, 0x9e4f4fd1'u32, 0xa3dcdc7f'u32,
+  0x44222266'u32, 0x542a2a7e'u32, 0x3b9090ab'u32, 0x0b888883'u32,
+  0x8c4646ca'u32, 0xc7eeee29'u32, 0x6bb8b8d3'u32, 0x2814143c'u32,
+  0xa7dede79'u32, 0xbc5e5ee2'u32, 0x160b0b1d'u32, 0xaddbdb76'u32,
+  0xdbe0e03b'u32, 0x64323256'u32, 0x743a3a4e'u32, 0x140a0a1e'u32,
+  0x924949db'u32, 0x0c06060a'u32, 0x4824246c'u32, 0xb85c5ce4'u32,
+  0x9fc2c25d'u32, 0xbdd3d36e'u32, 0x43acacef'u32, 0xc46262a6'u32,
+  0x399191a8'u32, 0x319595a4'u32, 0xd3e4e437'u32, 0xf279798b'u32,
+  0xd5e7e732'u32, 0x8bc8c843'u32, 0x6e373759'u32, 0xda6d6db7'u32,
+  0x018d8d8c'u32, 0xb1d5d564'u32, 0x9c4e4ed2'u32, 0x49a9a9e0'u32,
+  0xd86c6cb4'u32, 0xac5656fa'u32, 0xf3f4f407'u32, 0xcfeaea25'u32,
+  0xca6565af'u32, 0xf47a7a8e'u32, 0x47aeaee9'u32, 0x10080818'u32,
+  0x6fbabad5'u32, 0xf0787888'u32, 0x4a25256f'u32, 0x5c2e2e72'u32,
+  0x381c1c24'u32, 0x57a6a6f1'u32, 0x73b4b4c7'u32, 0x97c6c651'u32,
+  0xcbe8e823'u32, 0xa1dddd7c'u32, 0xe874749c'u32, 0x3e1f1f21'u32,
+  0x964b4bdd'u32, 0x61bdbddc'u32, 0x0d8b8b86'u32, 0x0f8a8a85'u32,
+  0xe0707090'u32, 0x7c3e3e42'u32, 0x71b5b5c4'u32, 0xcc6666aa'u32,
+  0x904848d8'u32, 0x06030305'u32, 0xf7f6f601'u32, 0x1c0e0e12'u32,
+  0xc26161a3'u32, 0x6a35355f'u32, 0xae5757f9'u32, 0x69b9b9d0'u32,
+  0x17868691'u32, 0x99c1c158'u32, 0x3a1d1d27'u32, 0x279e9eb9'u32,
+  0xd9e1e138'u32, 0xebf8f813'u32, 0x2b9898b3'u32, 0x22111133'u32,
+  0xd26969bb'u32, 0xa9d9d970'u32, 0x078e8e89'u32, 0x339494a7'u32,
+  0x2d9b9bb6'u32, 0x3c1e1e22'u32, 0x15878792'u32, 0xc9e9e920'u32,
+  0x87cece49'u32, 0xaa5555ff'u32, 0x50282878'u32, 0xa5dfdf7a'u32,
+  0x038c8c8f'u32, 0x59a1a1f8'u32, 0x09898980'u32, 0x1a0d0d17'u32,
+  0x65bfbfda'u32, 0xd7e6e631'u32, 0x844242c6'u32, 0xd06868b8'u32,
+  0x824141c3'u32, 0x299999b0'u32, 0x5a2d2d77'u32, 0x1e0f0f11'u32,
+  0x7bb0b0cb'u32, 0xa85454fc'u32, 0x6dbbbbd6'u32, 0x2c16163a'u32
+  ]
+  TE1: array[256, uint32] = [
+  0xa5c66363'u32, 0x84f87c7c'u32, 0x99ee7777'u32, 0x8df67b7b'u32,
+  0x0dfff2f2'u32, 0xbdd66b6b'u32, 0xb1de6f6f'u32, 0x5491c5c5'u32,
+  0x50603030'u32, 0x03020101'u32, 0xa9ce6767'u32, 0x7d562b2b'u32,
+  0x19e7fefe'u32, 0x62b5d7d7'u32, 0xe64dabab'u32, 0x9aec7676'u32,
+  0x458fcaca'u32, 0x9d1f8282'u32, 0x4089c9c9'u32, 0x87fa7d7d'u32,
+  0x15effafa'u32, 0xebb25959'u32, 0xc98e4747'u32, 0x0bfbf0f0'u32,
+  0xec41adad'u32, 0x67b3d4d4'u32, 0xfd5fa2a2'u32, 0xea45afaf'u32,
+  0xbf239c9c'u32, 0xf753a4a4'u32, 0x96e47272'u32, 0x5b9bc0c0'u32,
+  0xc275b7b7'u32, 0x1ce1fdfd'u32, 0xae3d9393'u32, 0x6a4c2626'u32,
+  0x5a6c3636'u32, 0x417e3f3f'u32, 0x02f5f7f7'u32, 0x4f83cccc'u32,
+  0x5c683434'u32, 0xf451a5a5'u32, 0x34d1e5e5'u32, 0x08f9f1f1'u32,
+  0x93e27171'u32, 0x73abd8d8'u32, 0x53623131'u32, 0x3f2a1515'u32,
+  0x0c080404'u32, 0x5295c7c7'u32, 0x65462323'u32, 0x5e9dc3c3'u32,
+  0x28301818'u32, 0xa1379696'u32, 0x0f0a0505'u32, 0xb52f9a9a'u32,
+  0x090e0707'u32, 0x36241212'u32, 0x9b1b8080'u32, 0x3ddfe2e2'u32,
+  0x26cdebeb'u32, 0x694e2727'u32, 0xcd7fb2b2'u32, 0x9fea7575'u32,
+  0x1b120909'u32, 0x9e1d8383'u32, 0x74582c2c'u32, 0x2e341a1a'u32,
+  0x2d361b1b'u32, 0xb2dc6e6e'u32, 0xeeb45a5a'u32, 0xfb5ba0a0'u32,
+  0xf6a45252'u32, 0x4d763b3b'u32, 0x61b7d6d6'u32, 0xce7db3b3'u32,
+  0x7b522929'u32, 0x3edde3e3'u32, 0x715e2f2f'u32, 0x97138484'u32,
+  0xf5a65353'u32, 0x68b9d1d1'u32, 0x00000000'u32, 0x2cc1eded'u32,
+  0x60402020'u32, 0x1fe3fcfc'u32, 0xc879b1b1'u32, 0xedb65b5b'u32,
+  0xbed46a6a'u32, 0x468dcbcb'u32, 0xd967bebe'u32, 0x4b723939'u32,
+  0xde944a4a'u32, 0xd4984c4c'u32, 0xe8b05858'u32, 0x4a85cfcf'u32,
+  0x6bbbd0d0'u32, 0x2ac5efef'u32, 0xe54faaaa'u32, 0x16edfbfb'u32,
+  0xc5864343'u32, 0xd79a4d4d'u32, 0x55663333'u32, 0x94118585'u32,
+  0xcf8a4545'u32, 0x10e9f9f9'u32, 0x06040202'u32, 0x81fe7f7f'u32,
+  0xf0a05050'u32, 0x44783c3c'u32, 0xba259f9f'u32, 0xe34ba8a8'u32,
+  0xf3a25151'u32, 0xfe5da3a3'u32, 0xc0804040'u32, 0x8a058f8f'u32,
+  0xad3f9292'u32, 0xbc219d9d'u32, 0x48703838'u32, 0x04f1f5f5'u32,
+  0xdf63bcbc'u32, 0xc177b6b6'u32, 0x75afdada'u32, 0x63422121'u32,
+  0x30201010'u32, 0x1ae5ffff'u32, 0x0efdf3f3'u32, 0x6dbfd2d2'u32,
+  0x4c81cdcd'u32, 0x14180c0c'u32, 0x35261313'u32, 0x2fc3ecec'u32,
+  0xe1be5f5f'u32, 0xa2359797'u32, 0xcc884444'u32, 0x392e1717'u32,
+  0x5793c4c4'u32, 0xf255a7a7'u32, 0x82fc7e7e'u32, 0x477a3d3d'u32,
+  0xacc86464'u32, 0xe7ba5d5d'u32, 0x2b321919'u32, 0x95e67373'u32,
+  0xa0c06060'u32, 0x98198181'u32, 0xd19e4f4f'u32, 0x7fa3dcdc'u32,
+  0x66442222'u32, 0x7e542a2a'u32, 0xab3b9090'u32, 0x830b8888'u32,
+  0xca8c4646'u32, 0x29c7eeee'u32, 0xd36bb8b8'u32, 0x3c281414'u32,
+  0x79a7dede'u32, 0xe2bc5e5e'u32, 0x1d160b0b'u32, 0x76addbdb'u32,
+  0x3bdbe0e0'u32, 0x56643232'u32, 0x4e743a3a'u32, 0x1e140a0a'u32,
+  0xdb924949'u32, 0x0a0c0606'u32, 0x6c482424'u32, 0xe4b85c5c'u32,
+  0x5d9fc2c2'u32, 0x6ebdd3d3'u32, 0xef43acac'u32, 0xa6c46262'u32,
+  0xa8399191'u32, 0xa4319595'u32, 0x37d3e4e4'u32, 0x8bf27979'u32,
+  0x32d5e7e7'u32, 0x438bc8c8'u32, 0x596e3737'u32, 0xb7da6d6d'u32,
+  0x8c018d8d'u32, 0x64b1d5d5'u32, 0xd29c4e4e'u32, 0xe049a9a9'u32,
+  0xb4d86c6c'u32, 0xfaac5656'u32, 0x07f3f4f4'u32, 0x25cfeaea'u32,
+  0xafca6565'u32, 0x8ef47a7a'u32, 0xe947aeae'u32, 0x18100808'u32,
+  0xd56fbaba'u32, 0x88f07878'u32, 0x6f4a2525'u32, 0x725c2e2e'u32,
+  0x24381c1c'u32, 0xf157a6a6'u32, 0xc773b4b4'u32, 0x5197c6c6'u32,
+  0x23cbe8e8'u32, 0x7ca1dddd'u32, 0x9ce87474'u32, 0x213e1f1f'u32,
+  0xdd964b4b'u32, 0xdc61bdbd'u32, 0x860d8b8b'u32, 0x850f8a8a'u32,
+  0x90e07070'u32, 0x427c3e3e'u32, 0xc471b5b5'u32, 0xaacc6666'u32,
+  0xd8904848'u32, 0x05060303'u32, 0x01f7f6f6'u32, 0x121c0e0e'u32,
+  0xa3c26161'u32, 0x5f6a3535'u32, 0xf9ae5757'u32, 0xd069b9b9'u32,
+  0x91178686'u32, 0x5899c1c1'u32, 0x273a1d1d'u32, 0xb9279e9e'u32,
+  0x38d9e1e1'u32, 0x13ebf8f8'u32, 0xb32b9898'u32, 0x33221111'u32,
+  0xbbd26969'u32, 0x70a9d9d9'u32, 0x89078e8e'u32, 0xa7339494'u32,
+  0xb62d9b9b'u32, 0x223c1e1e'u32, 0x92158787'u32, 0x20c9e9e9'u32,
+  0x4987cece'u32, 0xffaa5555'u32, 0x78502828'u32, 0x7aa5dfdf'u32,
+  0x8f038c8c'u32, 0xf859a1a1'u32, 0x80098989'u32, 0x171a0d0d'u32,
+  0xda65bfbf'u32, 0x31d7e6e6'u32, 0xc6844242'u32, 0xb8d06868'u32,
+  0xc3824141'u32, 0xb0299999'u32, 0x775a2d2d'u32, 0x111e0f0f'u32,
+  0xcb7bb0b0'u32, 0xfca85454'u32, 0xd66dbbbb'u32, 0x3a2c1616'u32
+  ]
+  TE2: array[256, uint32] = [
+  0x63a5c663'u32, 0x7c84f87c'u32, 0x7799ee77'u32, 0x7b8df67b'u32,
+  0xf20dfff2'u32, 0x6bbdd66b'u32, 0x6fb1de6f'u32, 0xc55491c5'u32,
+  0x30506030'u32, 0x01030201'u32, 0x67a9ce67'u32, 0x2b7d562b'u32,
+  0xfe19e7fe'u32, 0xd762b5d7'u32, 0xabe64dab'u32, 0x769aec76'u32,
+  0xca458fca'u32, 0x829d1f82'u32, 0xc94089c9'u32, 0x7d87fa7d'u32,
+  0xfa15effa'u32, 0x59ebb259'u32, 0x47c98e47'u32, 0xf00bfbf0'u32,
+  0xadec41ad'u32, 0xd467b3d4'u32, 0xa2fd5fa2'u32, 0xafea45af'u32,
+  0x9cbf239c'u32, 0xa4f753a4'u32, 0x7296e472'u32, 0xc05b9bc0'u32,
+  0xb7c275b7'u32, 0xfd1ce1fd'u32, 0x93ae3d93'u32, 0x266a4c26'u32,
+  0x365a6c36'u32, 0x3f417e3f'u32, 0xf702f5f7'u32, 0xcc4f83cc'u32,
+  0x345c6834'u32, 0xa5f451a5'u32, 0xe534d1e5'u32, 0xf108f9f1'u32,
+  0x7193e271'u32, 0xd873abd8'u32, 0x31536231'u32, 0x153f2a15'u32,
+  0x040c0804'u32, 0xc75295c7'u32, 0x23654623'u32, 0xc35e9dc3'u32,
+  0x18283018'u32, 0x96a13796'u32, 0x050f0a05'u32, 0x9ab52f9a'u32,
+  0x07090e07'u32, 0x12362412'u32, 0x809b1b80'u32, 0xe23ddfe2'u32,
+  0xeb26cdeb'u32, 0x27694e27'u32, 0xb2cd7fb2'u32, 0x759fea75'u32,
+  0x091b1209'u32, 0x839e1d83'u32, 0x2c74582c'u32, 0x1a2e341a'u32,
+  0x1b2d361b'u32, 0x6eb2dc6e'u32, 0x5aeeb45a'u32, 0xa0fb5ba0'u32,
+  0x52f6a452'u32, 0x3b4d763b'u32, 0xd661b7d6'u32, 0xb3ce7db3'u32,
+  0x297b5229'u32, 0xe33edde3'u32, 0x2f715e2f'u32, 0x84971384'u32,
+  0x53f5a653'u32, 0xd168b9d1'u32, 0x00000000'u32, 0xed2cc1ed'u32,
+  0x20604020'u32, 0xfc1fe3fc'u32, 0xb1c879b1'u32, 0x5bedb65b'u32,
+  0x6abed46a'u32, 0xcb468dcb'u32, 0xbed967be'u32, 0x394b7239'u32,
+  0x4ade944a'u32, 0x4cd4984c'u32, 0x58e8b058'u32, 0xcf4a85cf'u32,
+  0xd06bbbd0'u32, 0xef2ac5ef'u32, 0xaae54faa'u32, 0xfb16edfb'u32,
+  0x43c58643'u32, 0x4dd79a4d'u32, 0x33556633'u32, 0x85941185'u32,
+  0x45cf8a45'u32, 0xf910e9f9'u32, 0x02060402'u32, 0x7f81fe7f'u32,
+  0x50f0a050'u32, 0x3c44783c'u32, 0x9fba259f'u32, 0xa8e34ba8'u32,
+  0x51f3a251'u32, 0xa3fe5da3'u32, 0x40c08040'u32, 0x8f8a058f'u32,
+  0x92ad3f92'u32, 0x9dbc219d'u32, 0x38487038'u32, 0xf504f1f5'u32,
+  0xbcdf63bc'u32, 0xb6c177b6'u32, 0xda75afda'u32, 0x21634221'u32,
+  0x10302010'u32, 0xff1ae5ff'u32, 0xf30efdf3'u32, 0xd26dbfd2'u32,
+  0xcd4c81cd'u32, 0x0c14180c'u32, 0x13352613'u32, 0xec2fc3ec'u32,
+  0x5fe1be5f'u32, 0x97a23597'u32, 0x44cc8844'u32, 0x17392e17'u32,
+  0xc45793c4'u32, 0xa7f255a7'u32, 0x7e82fc7e'u32, 0x3d477a3d'u32,
+  0x64acc864'u32, 0x5de7ba5d'u32, 0x192b3219'u32, 0x7395e673'u32,
+  0x60a0c060'u32, 0x81981981'u32, 0x4fd19e4f'u32, 0xdc7fa3dc'u32,
+  0x22664422'u32, 0x2a7e542a'u32, 0x90ab3b90'u32, 0x88830b88'u32,
+  0x46ca8c46'u32, 0xee29c7ee'u32, 0xb8d36bb8'u32, 0x143c2814'u32,
+  0xde79a7de'u32, 0x5ee2bc5e'u32, 0x0b1d160b'u32, 0xdb76addb'u32,
+  0xe03bdbe0'u32, 0x32566432'u32, 0x3a4e743a'u32, 0x0a1e140a'u32,
+  0x49db9249'u32, 0x060a0c06'u32, 0x246c4824'u32, 0x5ce4b85c'u32,
+  0xc25d9fc2'u32, 0xd36ebdd3'u32, 0xacef43ac'u32, 0x62a6c462'u32,
+  0x91a83991'u32, 0x95a43195'u32, 0xe437d3e4'u32, 0x798bf279'u32,
+  0xe732d5e7'u32, 0xc8438bc8'u32, 0x37596e37'u32, 0x6db7da6d'u32,
+  0x8d8c018d'u32, 0xd564b1d5'u32, 0x4ed29c4e'u32, 0xa9e049a9'u32,
+  0x6cb4d86c'u32, 0x56faac56'u32, 0xf407f3f4'u32, 0xea25cfea'u32,
+  0x65afca65'u32, 0x7a8ef47a'u32, 0xaee947ae'u32, 0x08181008'u32,
+  0xbad56fba'u32, 0x7888f078'u32, 0x256f4a25'u32, 0x2e725c2e'u32,
+  0x1c24381c'u32, 0xa6f157a6'u32, 0xb4c773b4'u32, 0xc65197c6'u32,
+  0xe823cbe8'u32, 0xdd7ca1dd'u32, 0x749ce874'u32, 0x1f213e1f'u32,
+  0x4bdd964b'u32, 0xbddc61bd'u32, 0x8b860d8b'u32, 0x8a850f8a'u32,
+  0x7090e070'u32, 0x3e427c3e'u32, 0xb5c471b5'u32, 0x66aacc66'u32,
+  0x48d89048'u32, 0x03050603'u32, 0xf601f7f6'u32, 0x0e121c0e'u32,
+  0x61a3c261'u32, 0x355f6a35'u32, 0x57f9ae57'u32, 0xb9d069b9'u32,
+  0x86911786'u32, 0xc15899c1'u32, 0x1d273a1d'u32, 0x9eb9279e'u32,
+  0xe138d9e1'u32, 0xf813ebf8'u32, 0x98b32b98'u32, 0x11332211'u32,
+  0x69bbd269'u32, 0xd970a9d9'u32, 0x8e89078e'u32, 0x94a73394'u32,
+  0x9bb62d9b'u32, 0x1e223c1e'u32, 0x87921587'u32, 0xe920c9e9'u32,
+  0xce4987ce'u32, 0x55ffaa55'u32, 0x28785028'u32, 0xdf7aa5df'u32,
+  0x8c8f038c'u32, 0xa1f859a1'u32, 0x89800989'u32, 0x0d171a0d'u32,
+  0xbfda65bf'u32, 0xe631d7e6'u32, 0x42c68442'u32, 0x68b8d068'u32,
+  0x41c38241'u32, 0x99b02999'u32, 0x2d775a2d'u32, 0x0f111e0f'u32,
+  0xb0cb7bb0'u32, 0x54fca854'u32, 0xbbd66dbb'u32, 0x163a2c16'u32
+  ]
+  TE3: array[256, uint32] = [
+  0x6363a5c6'u32, 0x7c7c84f8'u32, 0x777799ee'u32, 0x7b7b8df6'u32,
+  0xf2f20dff'u32, 0x6b6bbdd6'u32, 0x6f6fb1de'u32, 0xc5c55491'u32,
+  0x30305060'u32, 0x01010302'u32, 0x6767a9ce'u32, 0x2b2b7d56'u32,
+  0xfefe19e7'u32, 0xd7d762b5'u32, 0xababe64d'u32, 0x76769aec'u32,
+  0xcaca458f'u32, 0x82829d1f'u32, 0xc9c94089'u32, 0x7d7d87fa'u32,
+  0xfafa15ef'u32, 0x5959ebb2'u32, 0x4747c98e'u32, 0xf0f00bfb'u32,
+  0xadadec41'u32, 0xd4d467b3'u32, 0xa2a2fd5f'u32, 0xafafea45'u32,
+  0x9c9cbf23'u32, 0xa4a4f753'u32, 0x727296e4'u32, 0xc0c05b9b'u32,
+  0xb7b7c275'u32, 0xfdfd1ce1'u32, 0x9393ae3d'u32, 0x26266a4c'u32,
+  0x36365a6c'u32, 0x3f3f417e'u32, 0xf7f702f5'u32, 0xcccc4f83'u32,
+  0x34345c68'u32, 0xa5a5f451'u32, 0xe5e534d1'u32, 0xf1f108f9'u32,
+  0x717193e2'u32, 0xd8d873ab'u32, 0x31315362'u32, 0x15153f2a'u32,
+  0x04040c08'u32, 0xc7c75295'u32, 0x23236546'u32, 0xc3c35e9d'u32,
+  0x18182830'u32, 0x9696a137'u32, 0x05050f0a'u32, 0x9a9ab52f'u32,
+  0x0707090e'u32, 0x12123624'u32, 0x80809b1b'u32, 0xe2e23ddf'u32,
+  0xebeb26cd'u32, 0x2727694e'u32, 0xb2b2cd7f'u32, 0x75759fea'u32,
+  0x09091b12'u32, 0x83839e1d'u32, 0x2c2c7458'u32, 0x1a1a2e34'u32,
+  0x1b1b2d36'u32, 0x6e6eb2dc'u32, 0x5a5aeeb4'u32, 0xa0a0fb5b'u32,
+  0x5252f6a4'u32, 0x3b3b4d76'u32, 0xd6d661b7'u32, 0xb3b3ce7d'u32,
+  0x29297b52'u32, 0xe3e33edd'u32, 0x2f2f715e'u32, 0x84849713'u32,
+  0x5353f5a6'u32, 0xd1d168b9'u32, 0x00000000'u32, 0xeded2cc1'u32,
+  0x20206040'u32, 0xfcfc1fe3'u32, 0xb1b1c879'u32, 0x5b5bedb6'u32,
+  0x6a6abed4'u32, 0xcbcb468d'u32, 0xbebed967'u32, 0x39394b72'u32,
+  0x4a4ade94'u32, 0x4c4cd498'u32, 0x5858e8b0'u32, 0xcfcf4a85'u32,
+  0xd0d06bbb'u32, 0xefef2ac5'u32, 0xaaaae54f'u32, 0xfbfb16ed'u32,
+  0x4343c586'u32, 0x4d4dd79a'u32, 0x33335566'u32, 0x85859411'u32,
+  0x4545cf8a'u32, 0xf9f910e9'u32, 0x02020604'u32, 0x7f7f81fe'u32,
+  0x5050f0a0'u32, 0x3c3c4478'u32, 0x9f9fba25'u32, 0xa8a8e34b'u32,
+  0x5151f3a2'u32, 0xa3a3fe5d'u32, 0x4040c080'u32, 0x8f8f8a05'u32,
+  0x9292ad3f'u32, 0x9d9dbc21'u32, 0x38384870'u32, 0xf5f504f1'u32,
+  0xbcbcdf63'u32, 0xb6b6c177'u32, 0xdada75af'u32, 0x21216342'u32,
+  0x10103020'u32, 0xffff1ae5'u32, 0xf3f30efd'u32, 0xd2d26dbf'u32,
+  0xcdcd4c81'u32, 0x0c0c1418'u32, 0x13133526'u32, 0xecec2fc3'u32,
+  0x5f5fe1be'u32, 0x9797a235'u32, 0x4444cc88'u32, 0x1717392e'u32,
+  0xc4c45793'u32, 0xa7a7f255'u32, 0x7e7e82fc'u32, 0x3d3d477a'u32,
+  0x6464acc8'u32, 0x5d5de7ba'u32, 0x19192b32'u32, 0x737395e6'u32,
+  0x6060a0c0'u32, 0x81819819'u32, 0x4f4fd19e'u32, 0xdcdc7fa3'u32,
+  0x22226644'u32, 0x2a2a7e54'u32, 0x9090ab3b'u32, 0x8888830b'u32,
+  0x4646ca8c'u32, 0xeeee29c7'u32, 0xb8b8d36b'u32, 0x14143c28'u32,
+  0xdede79a7'u32, 0x5e5ee2bc'u32, 0x0b0b1d16'u32, 0xdbdb76ad'u32,
+  0xe0e03bdb'u32, 0x32325664'u32, 0x3a3a4e74'u32, 0x0a0a1e14'u32,
+  0x4949db92'u32, 0x06060a0c'u32, 0x24246c48'u32, 0x5c5ce4b8'u32,
+  0xc2c25d9f'u32, 0xd3d36ebd'u32, 0xacacef43'u32, 0x6262a6c4'u32,
+  0x9191a839'u32, 0x9595a431'u32, 0xe4e437d3'u32, 0x79798bf2'u32,
+  0xe7e732d5'u32, 0xc8c8438b'u32, 0x3737596e'u32, 0x6d6db7da'u32,
+  0x8d8d8c01'u32, 0xd5d564b1'u32, 0x4e4ed29c'u32, 0xa9a9e049'u32,
+  0x6c6cb4d8'u32, 0x5656faac'u32, 0xf4f407f3'u32, 0xeaea25cf'u32,
+  0x6565afca'u32, 0x7a7a8ef4'u32, 0xaeaee947'u32, 0x08081810'u32,
+  0xbabad56f'u32, 0x787888f0'u32, 0x25256f4a'u32, 0x2e2e725c'u32,
+  0x1c1c2438'u32, 0xa6a6f157'u32, 0xb4b4c773'u32, 0xc6c65197'u32,
+  0xe8e823cb'u32, 0xdddd7ca1'u32, 0x74749ce8'u32, 0x1f1f213e'u32,
+  0x4b4bdd96'u32, 0xbdbddc61'u32, 0x8b8b860d'u32, 0x8a8a850f'u32,
+  0x707090e0'u32, 0x3e3e427c'u32, 0xb5b5c471'u32, 0x6666aacc'u32,
+  0x4848d890'u32, 0x03030506'u32, 0xf6f601f7'u32, 0x0e0e121c'u32,
+  0x6161a3c2'u32, 0x35355f6a'u32, 0x5757f9ae'u32, 0xb9b9d069'u32,
+  0x86869117'u32, 0xc1c15899'u32, 0x1d1d273a'u32, 0x9e9eb927'u32,
+  0xe1e138d9'u32, 0xf8f813eb'u32, 0x9898b32b'u32, 0x11113322'u32,
+  0x6969bbd2'u32, 0xd9d970a9'u32, 0x8e8e8907'u32, 0x9494a733'u32,
+  0x9b9bb62d'u32, 0x1e1e223c'u32, 0x87879215'u32, 0xe9e920c9'u32,
+  0xcece4987'u32, 0x5555ffaa'u32, 0x28287850'u32, 0xdfdf7aa5'u32,
+  0x8c8c8f03'u32, 0xa1a1f859'u32, 0x89898009'u32, 0x0d0d171a'u32,
+  0xbfbfda65'u32, 0xe6e631d7'u32, 0x4242c684'u32, 0x6868b8d0'u32,
+  0x4141c382'u32, 0x9999b029'u32, 0x2d2d775a'u32, 0x0f0f111e'u32,
+  0xb0b0cb7b'u32, 0x5454fca8'u32, 0xbbbbd66d'u32, 0x16163a2c'u32
+  ]
+  # declare T-Table for decryption
+  Td0: array[256, uint32] = [
+  0x51f4a750'u32, 0x7e416553'u32, 0x1a17a4c3'u32, 0x3a275e96'u32,
+  0x3bab6bcb'u32, 0x1f9d45f1'u32, 0xacfa58ab'u32, 0x4be30393'u32,
+  0x2030fa55'u32, 0xad766df6'u32, 0x88cc7691'u32, 0xf5024c25'u32,
+  0x4fe5d7fc'u32, 0xc52acbd7'u32, 0x26354480'u32, 0xb562a38f'u32,
+  0xdeb15a49'u32, 0x25ba1b67'u32, 0x45ea0e98'u32, 0x5dfec0e1'u32,
+  0xc32f7502'u32, 0x814cf012'u32, 0x8d4697a3'u32, 0x6bd3f9c6'u32,
+  0x038f5fe7'u32, 0x15929c95'u32, 0xbf6d7aeb'u32, 0x955259da'u32,
+  0xd4be832d'u32, 0x587421d3'u32, 0x49e06929'u32, 0x8ec9c844'u32,
+  0x75c2896a'u32, 0xf48e7978'u32, 0x99583e6b'u32, 0x27b971dd'u32,
+  0xbee14fb6'u32, 0xf088ad17'u32, 0xc920ac66'u32, 0x7dce3ab4'u32,
+  0x63df4a18'u32, 0xe51a3182'u32, 0x97513360'u32, 0x62537f45'u32,
+  0xb16477e0'u32, 0xbb6bae84'u32, 0xfe81a01c'u32, 0xf9082b94'u32,
+  0x70486858'u32, 0x8f45fd19'u32, 0x94de6c87'u32, 0x527bf8b7'u32,
+  0xab73d323'u32, 0x724b02e2'u32, 0xe31f8f57'u32, 0x6655ab2a'u32,
+  0xb2eb2807'u32, 0x2fb5c203'u32, 0x86c57b9a'u32, 0xd33708a5'u32,
+  0x302887f2'u32, 0x23bfa5b2'u32, 0x02036aba'u32, 0xed16825c'u32,
+  0x8acf1c2b'u32, 0xa779b492'u32, 0xf307f2f0'u32, 0x4e69e2a1'u32,
+  0x65daf4cd'u32, 0x0605bed5'u32, 0xd134621f'u32, 0xc4a6fe8a'u32,
+  0x342e539d'u32, 0xa2f355a0'u32, 0x058ae132'u32, 0xa4f6eb75'u32,
+  0x0b83ec39'u32, 0x4060efaa'u32, 0x5e719f06'u32, 0xbd6e1051'u32,
+  0x3e218af9'u32, 0x96dd063d'u32, 0xdd3e05ae'u32, 0x4de6bd46'u32,
+  0x91548db5'u32, 0x71c45d05'u32, 0x0406d46f'u32, 0x605015ff'u32,
+  0x1998fb24'u32, 0xd6bde997'u32, 0x894043cc'u32, 0x67d99e77'u32,
+  0xb0e842bd'u32, 0x07898b88'u32, 0xe7195b38'u32, 0x79c8eedb'u32,
+  0xa17c0a47'u32, 0x7c420fe9'u32, 0xf8841ec9'u32, 0x00000000'u32,
+  0x09808683'u32, 0x322bed48'u32, 0x1e1170ac'u32, 0x6c5a724e'u32,
+  0xfd0efffb'u32, 0x0f853856'u32, 0x3daed51e'u32, 0x362d3927'u32,
+  0x0a0fd964'u32, 0x685ca621'u32, 0x9b5b54d1'u32, 0x24362e3a'u32,
+  0x0c0a67b1'u32, 0x9357e70f'u32, 0xb4ee96d2'u32, 0x1b9b919e'u32,
+  0x80c0c54f'u32, 0x61dc20a2'u32, 0x5a774b69'u32, 0x1c121a16'u32,
+  0xe293ba0a'u32, 0xc0a02ae5'u32, 0x3c22e043'u32, 0x121b171d'u32,
+  0x0e090d0b'u32, 0xf28bc7ad'u32, 0x2db6a8b9'u32, 0x141ea9c8'u32,
+  0x57f11985'u32, 0xaf75074c'u32, 0xee99ddbb'u32, 0xa37f60fd'u32,
+  0xf701269f'u32, 0x5c72f5bc'u32, 0x44663bc5'u32, 0x5bfb7e34'u32,
+  0x8b432976'u32, 0xcb23c6dc'u32, 0xb6edfc68'u32, 0xb8e4f163'u32,
+  0xd731dcca'u32, 0x42638510'u32, 0x13972240'u32, 0x84c61120'u32,
+  0x854a247d'u32, 0xd2bb3df8'u32, 0xaef93211'u32, 0xc729a16d'u32,
+  0x1d9e2f4b'u32, 0xdcb230f3'u32, 0x0d8652ec'u32, 0x77c1e3d0'u32,
+  0x2bb3166c'u32, 0xa970b999'u32, 0x119448fa'u32, 0x47e96422'u32,
+  0xa8fc8cc4'u32, 0xa0f03f1a'u32, 0x567d2cd8'u32, 0x223390ef'u32,
+  0x87494ec7'u32, 0xd938d1c1'u32, 0x8ccaa2fe'u32, 0x98d40b36'u32,
+  0xa6f581cf'u32, 0xa57ade28'u32, 0xdab78e26'u32, 0x3fadbfa4'u32,
+  0x2c3a9de4'u32, 0x5078920d'u32, 0x6a5fcc9b'u32, 0x547e4662'u32,
+  0xf68d13c2'u32, 0x90d8b8e8'u32, 0x2e39f75e'u32, 0x82c3aff5'u32,
+  0x9f5d80be'u32, 0x69d0937c'u32, 0x6fd52da9'u32, 0xcf2512b3'u32,
+  0xc8ac993b'u32, 0x10187da7'u32, 0xe89c636e'u32, 0xdb3bbb7b'u32,
+  0xcd267809'u32, 0x6e5918f4'u32, 0xec9ab701'u32, 0x834f9aa8'u32,
+  0xe6956e65'u32, 0xaaffe67e'u32, 0x21bccf08'u32, 0xef15e8e6'u32,
+  0xbae79bd9'u32, 0x4a6f36ce'u32, 0xea9f09d4'u32, 0x29b07cd6'u32,
+  0x31a4b2af'u32, 0x2a3f2331'u32, 0xc6a59430'u32, 0x35a266c0'u32,
+  0x744ebc37'u32, 0xfc82caa6'u32, 0xe090d0b0'u32, 0x33a7d815'u32,
+  0xf104984a'u32, 0x41ecdaf7'u32, 0x7fcd500e'u32, 0x1791f62f'u32,
+  0x764dd68d'u32, 0x43efb04d'u32, 0xccaa4d54'u32, 0xe49604df'u32,
+  0x9ed1b5e3'u32, 0x4c6a881b'u32, 0xc12c1fb8'u32, 0x4665517f'u32,
+  0x9d5eea04'u32, 0x018c355d'u32, 0xfa877473'u32, 0xfb0b412e'u32,
+  0xb3671d5a'u32, 0x92dbd252'u32, 0xe9105633'u32, 0x6dd64713'u32,
+  0x9ad7618c'u32, 0x37a10c7a'u32, 0x59f8148e'u32, 0xeb133c89'u32,
+  0xcea927ee'u32, 0xb761c935'u32, 0xe11ce5ed'u32, 0x7a47b13c'u32,
+  0x9cd2df59'u32, 0x55f2733f'u32, 0x1814ce79'u32, 0x73c737bf'u32,
+  0x53f7cdea'u32, 0x5ffdaa5b'u32, 0xdf3d6f14'u32, 0x7844db86'u32,
+  0xcaaff381'u32, 0xb968c43e'u32, 0x3824342c'u32, 0xc2a3405f'u32,
+  0x161dc372'u32, 0xbce2250c'u32, 0x283c498b'u32, 0xff0d9541'u32,
+  0x39a80171'u32, 0x080cb3de'u32, 0xd8b4e49c'u32, 0x6456c190'u32,
+  0x7bcb8461'u32, 0xd532b670'u32, 0x486c5c74'u32, 0xd0b85742'u32
+  ]
+  Td1: array[256, uint32] = [
+  0x5051f4a7'u32, 0x537e4165'u32, 0xc31a17a4'u32, 0x963a275e'u32,
+  0xcb3bab6b'u32, 0xf11f9d45'u32, 0xabacfa58'u32, 0x934be303'u32,
+  0x552030fa'u32, 0xf6ad766d'u32, 0x9188cc76'u32, 0x25f5024c'u32,
+  0xfc4fe5d7'u32, 0xd7c52acb'u32, 0x80263544'u32, 0x8fb562a3'u32,
+  0x49deb15a'u32, 0x6725ba1b'u32, 0x9845ea0e'u32, 0xe15dfec0'u32,
+  0x02c32f75'u32, 0x12814cf0'u32, 0xa38d4697'u32, 0xc66bd3f9'u32,
+  0xe7038f5f'u32, 0x9515929c'u32, 0xebbf6d7a'u32, 0xda955259'u32,
+  0x2dd4be83'u32, 0xd3587421'u32, 0x2949e069'u32, 0x448ec9c8'u32,
+  0x6a75c289'u32, 0x78f48e79'u32, 0x6b99583e'u32, 0xdd27b971'u32,
+  0xb6bee14f'u32, 0x17f088ad'u32, 0x66c920ac'u32, 0xb47dce3a'u32,
+  0x1863df4a'u32, 0x82e51a31'u32, 0x60975133'u32, 0x4562537f'u32,
+  0xe0b16477'u32, 0x84bb6bae'u32, 0x1cfe81a0'u32, 0x94f9082b'u32,
+  0x58704868'u32, 0x198f45fd'u32, 0x8794de6c'u32, 0xb7527bf8'u32,
+  0x23ab73d3'u32, 0xe2724b02'u32, 0x57e31f8f'u32, 0x2a6655ab'u32,
+  0x07b2eb28'u32, 0x032fb5c2'u32, 0x9a86c57b'u32, 0xa5d33708'u32,
+  0xf2302887'u32, 0xb223bfa5'u32, 0xba02036a'u32, 0x5ced1682'u32,
+  0x2b8acf1c'u32, 0x92a779b4'u32, 0xf0f307f2'u32, 0xa14e69e2'u32,
+  0xcd65daf4'u32, 0xd50605be'u32, 0x1fd13462'u32, 0x8ac4a6fe'u32,
+  0x9d342e53'u32, 0xa0a2f355'u32, 0x32058ae1'u32, 0x75a4f6eb'u32,
+  0x390b83ec'u32, 0xaa4060ef'u32, 0x065e719f'u32, 0x51bd6e10'u32,
+  0xf93e218a'u32, 0x3d96dd06'u32, 0xaedd3e05'u32, 0x464de6bd'u32,
+  0xb591548d'u32, 0x0571c45d'u32, 0x6f0406d4'u32, 0xff605015'u32,
+  0x241998fb'u32, 0x97d6bde9'u32, 0xcc894043'u32, 0x7767d99e'u32,
+  0xbdb0e842'u32, 0x8807898b'u32, 0x38e7195b'u32, 0xdb79c8ee'u32,
+  0x47a17c0a'u32, 0xe97c420f'u32, 0xc9f8841e'u32, 0x00000000'u32,
+  0x83098086'u32, 0x48322bed'u32, 0xac1e1170'u32, 0x4e6c5a72'u32,
+  0xfbfd0eff'u32, 0x560f8538'u32, 0x1e3daed5'u32, 0x27362d39'u32,
+  0x640a0fd9'u32, 0x21685ca6'u32, 0xd19b5b54'u32, 0x3a24362e'u32,
+  0xb10c0a67'u32, 0x0f9357e7'u32, 0xd2b4ee96'u32, 0x9e1b9b91'u32,
+  0x4f80c0c5'u32, 0xa261dc20'u32, 0x695a774b'u32, 0x161c121a'u32,
+  0x0ae293ba'u32, 0xe5c0a02a'u32, 0x433c22e0'u32, 0x1d121b17'u32,
+  0x0b0e090d'u32, 0xadf28bc7'u32, 0xb92db6a8'u32, 0xc8141ea9'u32,
+  0x8557f119'u32, 0x4caf7507'u32, 0xbbee99dd'u32, 0xfda37f60'u32,
+  0x9ff70126'u32, 0xbc5c72f5'u32, 0xc544663b'u32, 0x345bfb7e'u32,
+  0x768b4329'u32, 0xdccb23c6'u32, 0x68b6edfc'u32, 0x63b8e4f1'u32,
+  0xcad731dc'u32, 0x10426385'u32, 0x40139722'u32, 0x2084c611'u32,
+  0x7d854a24'u32, 0xf8d2bb3d'u32, 0x11aef932'u32, 0x6dc729a1'u32,
+  0x4b1d9e2f'u32, 0xf3dcb230'u32, 0xec0d8652'u32, 0xd077c1e3'u32,
+  0x6c2bb316'u32, 0x99a970b9'u32, 0xfa119448'u32, 0x2247e964'u32,
+  0xc4a8fc8c'u32, 0x1aa0f03f'u32, 0xd8567d2c'u32, 0xef223390'u32,
+  0xc787494e'u32, 0xc1d938d1'u32, 0xfe8ccaa2'u32, 0x3698d40b'u32,
+  0xcfa6f581'u32, 0x28a57ade'u32, 0x26dab78e'u32, 0xa43fadbf'u32,
+  0xe42c3a9d'u32, 0x0d507892'u32, 0x9b6a5fcc'u32, 0x62547e46'u32,
+  0xc2f68d13'u32, 0xe890d8b8'u32, 0x5e2e39f7'u32, 0xf582c3af'u32,
+  0xbe9f5d80'u32, 0x7c69d093'u32, 0xa96fd52d'u32, 0xb3cf2512'u32,
+  0x3bc8ac99'u32, 0xa710187d'u32, 0x6ee89c63'u32, 0x7bdb3bbb'u32,
+  0x09cd2678'u32, 0xf46e5918'u32, 0x01ec9ab7'u32, 0xa8834f9a'u32,
+  0x65e6956e'u32, 0x7eaaffe6'u32, 0x0821bccf'u32, 0xe6ef15e8'u32,
+  0xd9bae79b'u32, 0xce4a6f36'u32, 0xd4ea9f09'u32, 0xd629b07c'u32,
+  0xaf31a4b2'u32, 0x312a3f23'u32, 0x30c6a594'u32, 0xc035a266'u32,
+  0x37744ebc'u32, 0xa6fc82ca'u32, 0xb0e090d0'u32, 0x1533a7d8'u32,
+  0x4af10498'u32, 0xf741ecda'u32, 0x0e7fcd50'u32, 0x2f1791f6'u32,
+  0x8d764dd6'u32, 0x4d43efb0'u32, 0x54ccaa4d'u32, 0xdfe49604'u32,
+  0xe39ed1b5'u32, 0x1b4c6a88'u32, 0xb8c12c1f'u32, 0x7f466551'u32,
+  0x049d5eea'u32, 0x5d018c35'u32, 0x73fa8774'u32, 0x2efb0b41'u32,
+  0x5ab3671d'u32, 0x5292dbd2'u32, 0x33e91056'u32, 0x136dd647'u32,
+  0x8c9ad761'u32, 0x7a37a10c'u32, 0x8e59f814'u32, 0x89eb133c'u32,
+  0xeecea927'u32, 0x35b761c9'u32, 0xede11ce5'u32, 0x3c7a47b1'u32,
+  0x599cd2df'u32, 0x3f55f273'u32, 0x791814ce'u32, 0xbf73c737'u32,
+  0xea53f7cd'u32, 0x5b5ffdaa'u32, 0x14df3d6f'u32, 0x867844db'u32,
+  0x81caaff3'u32, 0x3eb968c4'u32, 0x2c382434'u32, 0x5fc2a340'u32,
+  0x72161dc3'u32, 0x0cbce225'u32, 0x8b283c49'u32, 0x41ff0d95'u32,
+  0x7139a801'u32, 0xde080cb3'u32, 0x9cd8b4e4'u32, 0x906456c1'u32,
+  0x617bcb84'u32, 0x70d532b6'u32, 0x74486c5c'u32, 0x42d0b857'u32
+  ]
+  Td2: array[256, uint32] = [
+  0xa75051f4'u32, 0x65537e41'u32, 0xa4c31a17'u32, 0x5e963a27'u32,
+  0x6bcb3bab'u32, 0x45f11f9d'u32, 0x58abacfa'u32, 0x03934be3'u32,
+  0xfa552030'u32, 0x6df6ad76'u32, 0x769188cc'u32, 0x4c25f502'u32,
+  0xd7fc4fe5'u32, 0xcbd7c52a'u32, 0x44802635'u32, 0xa38fb562'u32,
+  0x5a49deb1'u32, 0x1b6725ba'u32, 0x0e9845ea'u32, 0xc0e15dfe'u32,
+  0x7502c32f'u32, 0xf012814c'u32, 0x97a38d46'u32, 0xf9c66bd3'u32,
+  0x5fe7038f'u32, 0x9c951592'u32, 0x7aebbf6d'u32, 0x59da9552'u32,
+  0x832dd4be'u32, 0x21d35874'u32, 0x692949e0'u32, 0xc8448ec9'u32,
+  0x896a75c2'u32, 0x7978f48e'u32, 0x3e6b9958'u32, 0x71dd27b9'u32,
+  0x4fb6bee1'u32, 0xad17f088'u32, 0xac66c920'u32, 0x3ab47dce'u32,
+  0x4a1863df'u32, 0x3182e51a'u32, 0x33609751'u32, 0x7f456253'u32,
+  0x77e0b164'u32, 0xae84bb6b'u32, 0xa01cfe81'u32, 0x2b94f908'u32,
+  0x68587048'u32, 0xfd198f45'u32, 0x6c8794de'u32, 0xf8b7527b'u32,
+  0xd323ab73'u32, 0x02e2724b'u32, 0x8f57e31f'u32, 0xab2a6655'u32,
+  0x2807b2eb'u32, 0xc2032fb5'u32, 0x7b9a86c5'u32, 0x08a5d337'u32,
+  0x87f23028'u32, 0xa5b223bf'u32, 0x6aba0203'u32, 0x825ced16'u32,
+  0x1c2b8acf'u32, 0xb492a779'u32, 0xf2f0f307'u32, 0xe2a14e69'u32,
+  0xf4cd65da'u32, 0xbed50605'u32, 0x621fd134'u32, 0xfe8ac4a6'u32,
+  0x539d342e'u32, 0x55a0a2f3'u32, 0xe132058a'u32, 0xeb75a4f6'u32,
+  0xec390b83'u32, 0xefaa4060'u32, 0x9f065e71'u32, 0x1051bd6e'u32,
+  0x8af93e21'u32, 0x063d96dd'u32, 0x05aedd3e'u32, 0xbd464de6'u32,
+  0x8db59154'u32, 0x5d0571c4'u32, 0xd46f0406'u32, 0x15ff6050'u32,
+  0xfb241998'u32, 0xe997d6bd'u32, 0x43cc8940'u32, 0x9e7767d9'u32,
+  0x42bdb0e8'u32, 0x8b880789'u32, 0x5b38e719'u32, 0xeedb79c8'u32,
+  0x0a47a17c'u32, 0x0fe97c42'u32, 0x1ec9f884'u32, 0x00000000'u32,
+  0x86830980'u32, 0xed48322b'u32, 0x70ac1e11'u32, 0x724e6c5a'u32,
+  0xfffbfd0e'u32, 0x38560f85'u32, 0xd51e3dae'u32, 0x3927362d'u32,
+  0xd9640a0f'u32, 0xa621685c'u32, 0x54d19b5b'u32, 0x2e3a2436'u32,
+  0x67b10c0a'u32, 0xe70f9357'u32, 0x96d2b4ee'u32, 0x919e1b9b'u32,
+  0xc54f80c0'u32, 0x20a261dc'u32, 0x4b695a77'u32, 0x1a161c12'u32,
+  0xba0ae293'u32, 0x2ae5c0a0'u32, 0xe0433c22'u32, 0x171d121b'u32,
+  0x0d0b0e09'u32, 0xc7adf28b'u32, 0xa8b92db6'u32, 0xa9c8141e'u32,
+  0x198557f1'u32, 0x074caf75'u32, 0xddbbee99'u32, 0x60fda37f'u32,
+  0x269ff701'u32, 0xf5bc5c72'u32, 0x3bc54466'u32, 0x7e345bfb'u32,
+  0x29768b43'u32, 0xc6dccb23'u32, 0xfc68b6ed'u32, 0xf163b8e4'u32,
+  0xdccad731'u32, 0x85104263'u32, 0x22401397'u32, 0x112084c6'u32,
+  0x247d854a'u32, 0x3df8d2bb'u32, 0x3211aef9'u32, 0xa16dc729'u32,
+  0x2f4b1d9e'u32, 0x30f3dcb2'u32, 0x52ec0d86'u32, 0xe3d077c1'u32,
+  0x166c2bb3'u32, 0xb999a970'u32, 0x48fa1194'u32, 0x642247e9'u32,
+  0x8cc4a8fc'u32, 0x3f1aa0f0'u32, 0x2cd8567d'u32, 0x90ef2233'u32,
+  0x4ec78749'u32, 0xd1c1d938'u32, 0xa2fe8cca'u32, 0x0b3698d4'u32,
+  0x81cfa6f5'u32, 0xde28a57a'u32, 0x8e26dab7'u32, 0xbfa43fad'u32,
+  0x9de42c3a'u32, 0x920d5078'u32, 0xcc9b6a5f'u32, 0x4662547e'u32,
+  0x13c2f68d'u32, 0xb8e890d8'u32, 0xf75e2e39'u32, 0xaff582c3'u32,
+  0x80be9f5d'u32, 0x937c69d0'u32, 0x2da96fd5'u32, 0x12b3cf25'u32,
+  0x993bc8ac'u32, 0x7da71018'u32, 0x636ee89c'u32, 0xbb7bdb3b'u32,
+  0x7809cd26'u32, 0x18f46e59'u32, 0xb701ec9a'u32, 0x9aa8834f'u32,
+  0x6e65e695'u32, 0xe67eaaff'u32, 0xcf0821bc'u32, 0xe8e6ef15'u32,
+  0x9bd9bae7'u32, 0x36ce4a6f'u32, 0x09d4ea9f'u32, 0x7cd629b0'u32,
+  0xb2af31a4'u32, 0x23312a3f'u32, 0x9430c6a5'u32, 0x66c035a2'u32,
+  0xbc37744e'u32, 0xcaa6fc82'u32, 0xd0b0e090'u32, 0xd81533a7'u32,
+  0x984af104'u32, 0xdaf741ec'u32, 0x500e7fcd'u32, 0xf62f1791'u32,
+  0xd68d764d'u32, 0xb04d43ef'u32, 0x4d54ccaa'u32, 0x04dfe496'u32,
+  0xb5e39ed1'u32, 0x881b4c6a'u32, 0x1fb8c12c'u32, 0x517f4665'u32,
+  0xea049d5e'u32, 0x355d018c'u32, 0x7473fa87'u32, 0x412efb0b'u32,
+  0x1d5ab367'u32, 0xd25292db'u32, 0x5633e910'u32, 0x47136dd6'u32,
+  0x618c9ad7'u32, 0x0c7a37a1'u32, 0x148e59f8'u32, 0x3c89eb13'u32,
+  0x27eecea9'u32, 0xc935b761'u32, 0xe5ede11c'u32, 0xb13c7a47'u32,
+  0xdf599cd2'u32, 0x733f55f2'u32, 0xce791814'u32, 0x37bf73c7'u32,
+  0xcdea53f7'u32, 0xaa5b5ffd'u32, 0x6f14df3d'u32, 0xdb867844'u32,
+  0xf381caaf'u32, 0xc43eb968'u32, 0x342c3824'u32, 0x405fc2a3'u32,
+  0xc372161d'u32, 0x250cbce2'u32, 0x498b283c'u32, 0x9541ff0d'u32,
+  0x017139a8'u32, 0xb3de080c'u32, 0xe49cd8b4'u32, 0xc1906456'u32,
+  0x84617bcb'u32, 0xb670d532'u32, 0x5c74486c'u32, 0x5742d0b8'u32
+  ]
+  Td3: array[256, uint32] = [
+  0xf4a75051'u32, 0x4165537e'u32, 0x17a4c31a'u32, 0x275e963a'u32,
+  0xab6bcb3b'u32, 0x9d45f11f'u32, 0xfa58abac'u32, 0xe303934b'u32,
+  0x30fa5520'u32, 0x766df6ad'u32, 0xcc769188'u32, 0x024c25f5'u32,
+  0xe5d7fc4f'u32, 0x2acbd7c5'u32, 0x35448026'u32, 0x62a38fb5'u32,
+  0xb15a49de'u32, 0xba1b6725'u32, 0xea0e9845'u32, 0xfec0e15d'u32,
+  0x2f7502c3'u32, 0x4cf01281'u32, 0x4697a38d'u32, 0xd3f9c66b'u32,
+  0x8f5fe703'u32, 0x929c9515'u32, 0x6d7aebbf'u32, 0x5259da95'u32,
+  0xbe832dd4'u32, 0x7421d358'u32, 0xe0692949'u32, 0xc9c8448e'u32,
+  0xc2896a75'u32, 0x8e7978f4'u32, 0x583e6b99'u32, 0xb971dd27'u32,
+  0xe14fb6be'u32, 0x88ad17f0'u32, 0x20ac66c9'u32, 0xce3ab47d'u32,
+  0xdf4a1863'u32, 0x1a3182e5'u32, 0x51336097'u32, 0x537f4562'u32,
+  0x6477e0b1'u32, 0x6bae84bb'u32, 0x81a01cfe'u32, 0x082b94f9'u32,
+  0x48685870'u32, 0x45fd198f'u32, 0xde6c8794'u32, 0x7bf8b752'u32,
+  0x73d323ab'u32, 0x4b02e272'u32, 0x1f8f57e3'u32, 0x55ab2a66'u32,
+  0xeb2807b2'u32, 0xb5c2032f'u32, 0xc57b9a86'u32, 0x3708a5d3'u32,
+  0x2887f230'u32, 0xbfa5b223'u32, 0x036aba02'u32, 0x16825ced'u32,
+  0xcf1c2b8a'u32, 0x79b492a7'u32, 0x07f2f0f3'u32, 0x69e2a14e'u32,
+  0xdaf4cd65'u32, 0x05bed506'u32, 0x34621fd1'u32, 0xa6fe8ac4'u32,
+  0x2e539d34'u32, 0xf355a0a2'u32, 0x8ae13205'u32, 0xf6eb75a4'u32,
+  0x83ec390b'u32, 0x60efaa40'u32, 0x719f065e'u32, 0x6e1051bd'u32,
+  0x218af93e'u32, 0xdd063d96'u32, 0x3e05aedd'u32, 0xe6bd464d'u32,
+  0x548db591'u32, 0xc45d0571'u32, 0x06d46f04'u32, 0x5015ff60'u32,
+  0x98fb2419'u32, 0xbde997d6'u32, 0x4043cc89'u32, 0xd99e7767'u32,
+  0xe842bdb0'u32, 0x898b8807'u32, 0x195b38e7'u32, 0xc8eedb79'u32,
+  0x7c0a47a1'u32, 0x420fe97c'u32, 0x841ec9f8'u32, 0x00000000'u32,
+  0x80868309'u32, 0x2bed4832'u32, 0x1170ac1e'u32, 0x5a724e6c'u32,
+  0x0efffbfd'u32, 0x8538560f'u32, 0xaed51e3d'u32, 0x2d392736'u32,
+  0x0fd9640a'u32, 0x5ca62168'u32, 0x5b54d19b'u32, 0x362e3a24'u32,
+  0x0a67b10c'u32, 0x57e70f93'u32, 0xee96d2b4'u32, 0x9b919e1b'u32,
+  0xc0c54f80'u32, 0xdc20a261'u32, 0x774b695a'u32, 0x121a161c'u32,
+  0x93ba0ae2'u32, 0xa02ae5c0'u32, 0x22e0433c'u32, 0x1b171d12'u32,
+  0x090d0b0e'u32, 0x8bc7adf2'u32, 0xb6a8b92d'u32, 0x1ea9c814'u32,
+  0xf1198557'u32, 0x75074caf'u32, 0x99ddbbee'u32, 0x7f60fda3'u32,
+  0x01269ff7'u32, 0x72f5bc5c'u32, 0x663bc544'u32, 0xfb7e345b'u32,
+  0x4329768b'u32, 0x23c6dccb'u32, 0xedfc68b6'u32, 0xe4f163b8'u32,
+  0x31dccad7'u32, 0x63851042'u32, 0x97224013'u32, 0xc6112084'u32,
+  0x4a247d85'u32, 0xbb3df8d2'u32, 0xf93211ae'u32, 0x29a16dc7'u32,
+  0x9e2f4b1d'u32, 0xb230f3dc'u32, 0x8652ec0d'u32, 0xc1e3d077'u32,
+  0xb3166c2b'u32, 0x70b999a9'u32, 0x9448fa11'u32, 0xe9642247'u32,
+  0xfc8cc4a8'u32, 0xf03f1aa0'u32, 0x7d2cd856'u32, 0x3390ef22'u32,
+  0x494ec787'u32, 0x38d1c1d9'u32, 0xcaa2fe8c'u32, 0xd40b3698'u32,
+  0xf581cfa6'u32, 0x7ade28a5'u32, 0xb78e26da'u32, 0xadbfa43f'u32,
+  0x3a9de42c'u32, 0x78920d50'u32, 0x5fcc9b6a'u32, 0x7e466254'u32,
+  0x8d13c2f6'u32, 0xd8b8e890'u32, 0x39f75e2e'u32, 0xc3aff582'u32,
+  0x5d80be9f'u32, 0xd0937c69'u32, 0xd52da96f'u32, 0x2512b3cf'u32,
+  0xac993bc8'u32, 0x187da710'u32, 0x9c636ee8'u32, 0x3bbb7bdb'u32,
+  0x267809cd'u32, 0x5918f46e'u32, 0x9ab701ec'u32, 0x4f9aa883'u32,
+  0x956e65e6'u32, 0xffe67eaa'u32, 0xbccf0821'u32, 0x15e8e6ef'u32,
+  0xe79bd9ba'u32, 0x6f36ce4a'u32, 0x9f09d4ea'u32, 0xb07cd629'u32,
+  0xa4b2af31'u32, 0x3f23312a'u32, 0xa59430c6'u32, 0xa266c035'u32,
+  0x4ebc3774'u32, 0x82caa6fc'u32, 0x90d0b0e0'u32, 0xa7d81533'u32,
+  0x04984af1'u32, 0xecdaf741'u32, 0xcd500e7f'u32, 0x91f62f17'u32,
+  0x4dd68d76'u32, 0xefb04d43'u32, 0xaa4d54cc'u32, 0x9604dfe4'u32,
+  0xd1b5e39e'u32, 0x6a881b4c'u32, 0x2c1fb8c1'u32, 0x65517f46'u32,
+  0x5eea049d'u32, 0x8c355d01'u32, 0x877473fa'u32, 0x0b412efb'u32,
+  0x671d5ab3'u32, 0xdbd25292'u32, 0x105633e9'u32, 0xd647136d'u32,
+  0xd7618c9a'u32, 0xa10c7a37'u32, 0xf8148e59'u32, 0x133c89eb'u32,
+  0xa927eece'u32, 0x61c935b7'u32, 0x1ce5ede1'u32, 0x47b13c7a'u32,
+  0xd2df599c'u32, 0xf2733f55'u32, 0x14ce7918'u32, 0xc737bf73'u32,
+  0xf7cdea53'u32, 0xfdaa5b5f'u32, 0x3d6f14df'u32, 0x44db8678'u32,
+  0xaff381ca'u32, 0x68c43eb9'u32, 0x24342c38'u32, 0xa3405fc2'u32,
+  0x1dc37216'u32, 0xe2250cbc'u32, 0x3c498b28'u32, 0x0d9541ff'u32,
+  0xa8017139'u32, 0x0cb3de08'u32, 0xb4e49cd8'u32, 0x56c19064'u32,
+  0xcb84617b'u32, 0x32b670d5'u32, 0x6c5c7448'u32, 0xb85742d0'u32,
+  ]
+  # declare S-Box for encryption
+  SBoxE: array[256, uint8] = [
   0x63'u8, 0x7c'u8, 0x77'u8, 0x7b'u8, 0xf2'u8, 0x6b'u8, 0x6f'u8, 0xc5'u8,
   0x30'u8, 0x01'u8, 0x67'u8, 0x2b'u8, 0xfe'u8, 0xd7'u8, 0xab'u8, 0x76'u8,
   0xca'u8, 0x82'u8, 0xc9'u8, 0x7d'u8, 0xfa'u8, 0x59'u8, 0x47'u8, 0xf0'u8,
@@ -37,7 +573,8 @@ const
   0x8c'u8, 0xa1'u8, 0x89'u8, 0x0d'u8, 0xbf'u8, 0xe6'u8, 0x42'u8, 0x68'u8,
   0x41'u8, 0x99'u8, 0x2d'u8, 0x0f'u8, 0xb0'u8, 0x54'u8, 0xbb'u8, 0x16'u8
   ]
-  InvSubBytesTable: array[256, uint8] = [
+  # declare S-Box for decryption
+  SBoxD: array[256, uint8] = [
   0x52'u8, 0x09'u8, 0x6a'u8, 0xd5'u8, 0x30'u8, 0x36'u8, 0xa5'u8, 0x38'u8,
   0xbf'u8, 0x40'u8, 0xa3'u8, 0x9e'u8, 0x81'u8, 0xf3'u8, 0xd7'u8, 0xfb'u8,
   0x7c'u8, 0xe3'u8, 0x39'u8, 0x82'u8, 0x9b'u8, 0x2f'u8, 0xff'u8, 0x87'u8,
@@ -71,7 +608,9 @@ const
   0x17'u8, 0x2b'u8, 0x04'u8, 0x7e'u8, 0xba'u8, 0x77'u8, 0xd6'u8, 0x26'u8,
   0xe1'u8, 0x69'u8, 0x14'u8, 0x63'u8, 0x55'u8, 0x21'u8, 0x0c'u8, 0x7d'u8
   ]
-  Rcon*: array[11, uint8] = [0x00'u8, 0x01'u8, 0x02'u8, 0x04'u8, 0x08'u8,
+  # declare round constant
+  Rcon*: array[11, uint8] = [
+  0x00'u8, 0x01'u8, 0x02'u8, 0x04'u8, 0x08'u8,
   0x10'u8, 0x20'u8, 0x40'u8, 0x80'u8, 0x1b'u8, 0x36'u8]
 
   AES128KeySize*: int = 16
@@ -93,65 +632,310 @@ const
 
   MaxNumRounds*: int = 14
   MaxkeyBytes*: int = 256 div 8
-  
-  Check64bit: bool = (sizeof(int) == 8) and (defined(amd64) or defined(alpha) or defined(powerpc64) or 
-  defined(powerpc64el) or defined(sparc64) or defined(mips64el) or defined(ia64) or 
-  defined(riscv64) or defined(loongarch64) or defined(mips64) or defined(s390x) or 
-  defined(arm64) or defined(e2k))
 
-  Check32bit: bool = (sizeof(int) == 4) and (defined(i386) or defined(m68k) or defined(powerpc) or
-  defined(sparc) or defined(hppa) or defined(mips) or defined(mipsel) or defined(arm) or
-  defined(riscv32))
+# CPU's bits constant
+const
+  Bits*: int = sizeof(int) * 8
 
+when Bits == 64:
+  # Rijndael general context for 64bits
+  type
+    RijndaelCtx*[keyBits: static uint] = object
+      when keyBits == 128:
+        roundKey*: array[44, uint32]
+      elif keyBits == 192:
+        roundKey*: array[52, uint32]
+      elif keyBits == 256:
+        roundKey*: array[60, uint32]
+elif Bits == 32:
+  # Rijndael general context for 32bits
+  type
+    RijndaelCtx*[keyBits: static uint] = object
+      when keyBits == 128:
+        roundKey*: array[44, uint32]
+      elif keyBits == 192:
+        roundKey*: array[52, uint32]
+      elif keyBits == 256:
+        roundKey*: array[60, uint32]
+else:
+  # Rijndael general context for 8bits
+  type
+    RijndaelCtx*[keyBits: static uint] = object
+      case k: range[0..256] = keyBits
+      of 128:
+        roundKey*: array[176, uint8]
+      of 192:
+        roundKey*: array[208, uint8]
+      of 256:
+        roundKey*: array[240, uint8]
+
+# declare AES context
 type
-  Aes128RoundKey* = array[44, uint32]
-  Aes192RoundKey* = array[52, uint32]
-  Aes256RoundKey* = array[60, uint32]
-  AesRoundKey = concept x
-    x is Aes128RoundKey or x is Aes192RoundKey or x is Aes256RoundKey
+  AES128Ctx* = RijndaelCtx[128]
+  AES192Ctx* = RijndaelCtx[192]
+  AES256Ctx* = RijndaelCtx[256]
 
-template addRoundKey(state: ptr array[2, uint64], key: ptr array[2, uint64]): void =
-  for i in 0 ..< 2:
-    state[i] = state[i] xor key[i]
-
+# swap bits
 template swap(x: var uint32): uint32 =
   (leftRotate(x, 8) and 0x00FF00FF'u32) or
   (rightRotate(x, 8) and 0xFF00FF00'u32)
+#[
+# generic s-box with calculation
+template subGeneric[T](state: T): T =
+  var x: T
+  var y: T
+  var a1: T
+  var a2: T
+  var a3: T
+  var a4: T
+  var a5: T
+  var a6: T
 
-template subByte(state: var array[16, uint8]): void =
-  for i in 0 ..< 16:
-    state[i] = SubBytesTable[state[i]]
+  x = state
+  y = ((x and extend[T](0xFE'u8)) shr 1) or ((x and extend[T](0x01'u8)) shl 7)
+  x &= extend[T](0xDD'u8)
+  x ^= y and extend[T](0x57'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x1C'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x4A'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x42'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x64'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0xE0'u8)
+  a1 = x
+  a1 ^= (x and extend[T](0xF0'u8)) shr 4
+  a2 = ((x and extend[T](0xCC'u8)) shr 2) or ((x and extend[T](0x33'u8)) shl 2)
+  a3 = x and a1
+  a3 ^= (a3 and extend[T](0xAA'u8)) shr 1
+  a3 ^= (((x shl 1) and a1) xor ((a1 shl 1) and x)) and extend[T](0xAA'u8)
+  a4 = a2 and a1
+  a4 ^= (a4 & extend[T](0xAA'u8)) shr 1
+  a4 ^= (((a2 shl 1) and a1) xor ((a1 shl 1) and a2)) and extend[T](0xAA'u8)
+  a5 = (a3 and extend[T](0xCC'u8)) shr 2
+  a3 ^= ((a4 shl 2) xor a4) and extend[T](0xCC'u8)
+  a4 = a5 and extend[T](0x22'u8)
+  a4 |= a4 shr 1
+  a4 ^= (a5 shl 1) and extend[T](0x22'u8)
+  a3 ^= a4
+  a5 = a3 and extend[T](0xA0'u8)
+  a5 |= a5 shr 1
+  a5 ^= (a3 shl 1) and extend[T](0xA0'u8)
+  a4 = a5 and extend[T](0xC0'u8)
+  a6 = a4 shr 2
+  a4 ^= (a5 shl 2) and extend[T](0xC0'u8)
+  a5 = a6 and extend[T](0x20'u8)
+  a5 |= a5 shr 1
+  a5 ^= (a6 shl 1) and extend[T](0x20'u8)
+  a4 |= a5
+  a3 ^= a4 shr 4
+  a3 &= extend[T](0x0F'u8)
+  a2 = a3
+  a2 ^= (a3 and extend[T](0x0C'u8)) shr 2
+  a4 = a3 and a2
+  a4 ^= (a4 and extend[T](0x0A'u8)) shr 1
+  a4 ^= (((a3 shl 1) and a2) xor ((a2 shl 1) and a3)) and extend[T](0x0A'u8)
+  a5 = a4 and extend[T](0x08'u8)
+  a5 |= a5 shr 1
+  a5 ^= (a4 shl 1) and extend[T](0x08'u8)
+  a4 ^= a5 shr 2
+  a4 &= extend[T](0x03'u8)
+  a4 ^= (a4 and extend[T](0x02'u8)) shr 1
+  a4 |= a4 shl 2
+  a3 = a2 and a4
+  a3 ^= (a3 and extend[T](0x0A'u8)) shr 1
+  a3 ^= (((a2 shl 1) and a4) xor ((a4 shl 1) and a2)) and extend[T](0x0A'u8)
+  a3 |= a3 shl 4
+  a2 = ((a1 and extend[T](0xCC'u8)) shr 2) or ((a1 and extend[T](0x33'u8)) shl 2)
+  x = a1 and a3
+  x ^= (x and extend[T](0xAA'u8)) shr 1
+  x ^= (((a1 shl 1) and a3) xor ((a3 shl 1) and a1)) and extend[T](0xAA'u8)
+  a4 = a2 and a3
+  a4 ^= (a4 and extend[T](0xAA'u8)) shr 1
+  a4 ^= (((a2 shl 1) and a3) xor ((a3 shl 1) and a2)) and extend[T](0xAA'u8)
+  a5 = (x and extend[T](0xCC'u8)) shr 2
+  x ^= ((a4 shl 2) ^ a4) and extend[T](0xCC'u8)
+  a4 = a5 and extend[T](0x22'u8)
+  a4 |= a4 shr 1
+  a4 ^= (a5 shl 1) and extend[T](0x22'u8)
+  x ^= a4
+  y = ((x and extend[T](0xFE'u8)) shr 1) or ((x and extend[T](0x01'u8)) shl 7)
+  x &= extend[T](0x39'u8)
+  x ^= y and extend[T](0x3F'u8)
+  y = ((y and extend[T](0xFC'u8)) shr 2) or ((y and extend[T](0x03'u8)) shl 6)
+  x ^= y and extend[T](0x97'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x9B'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x3C'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0xDD'u8)
+  y = ((y and extend[T](0xFE'u8)) shr 1) or ((y and extend[T](0x01'u8)) shl 7)
+  x ^= y and extend[T](0x72'u8)
+  x ^= extend[T](0x63'u8)
 
-template invSubByte(state: var array[16, uint8]): void =
-  for i in 0 ..< 16:
-    state[i] = InvSubBytesTable[state[i]]
+  x
+]#
+#[
+not use now
+OpenSSL's invSubLong is not inverse version of subGeneric
 
-template subWord(word: var uint32): void =
-  var wordAddr: ptr array[4, uint8] = cast[ptr array[4, uint8]](addr word)
-  
-  for i in 0 ..< 4:
-    wordAddr[i] = SubBytesTable[wordAddr[i]]
+template invSubGeneric[T: SomeUnsignedInt](state: ptr T): void =
+  var x: T
+  var y: T
+  var a1: T
+  var a2: T
+  var a3: T
+  var a4: T
+  var a5: T
+  var a6: T
 
-template rotWord(value: var uint32): void =
-  bits.rightRotate(value, 0x8'u32)
+  # initialize x
+  x = state[]
 
-template keyExpansionTemplate[T: AesRoundKey, N: static[int]](key: lent array[N, uint8], roundKey: var T): void =
-  static:
-    doAssert N == 16 or N == 24 or N == 32, "16, 24, 32 are only allowed for key length"
+  # w + c
+  x ^= extend[T](0x63'u8)
 
-  lencopy(key, roundKey, key.len div 4)
+  # bit matrix multiplcation (linear part of inverse affine transformation)
+  y = ((x and extend[T](0xFE'u8)) >> 1) or ((x and extend[T](0x01'u8)) << 7)
+  x &= extend[T](0xFD'u8)
+  x ^= y and extend[T](0x5E'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0xF3'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0xF5'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x78'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x77'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x15'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0xA5'u8)
 
-  for i in (key.len div 4) ..< roundKey.len:
-    var tmp: uint32
-    if i mod 8 == 0:
-      tmp = subWord(rotWord(roundKey[i - 1])) xor Rcon[i div 8]
-    elif i mod 8 == 4:
-      tmp = subWord(roundKey[i - 1])
-    else:
-      tmp = roundKey[i - 1]
-    roundKey[i] = roundKey[i - 8] xor tmp
+  # after processing part
+  y = ((x and extend[T](0xFE'u8)) >> 1) or ((x and extend[T](0x01'u8)) << 7)
+  x &= extend[T](0xB5'u8)
+  x ^= y and extend[T](0x40'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x80'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x16'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0xEB'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x97'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0xFB'u8)
+  y = ((y and extend[T](0xFE'u8)) >> 1) or ((y and extend[T](0x01'u8)) << 7)
+  x ^= y and extend[T](0x7D'u8)
 
-template shiftRows(state: var array[16, uint8]): void =
+  # get inversion of GF(2 ^ 8) multiplcation
+  a1 = x
+  a1 ^= (x and extend[T](0xF0'u8)) >> 4
+  a2 = ((x and extend[T](0xCC'u8)) >> 2) or ((x and extend[T](0x33'u8)) << 2)
+  a3 = x and a1
+  a3 ^= (a3 and extend[T](0xAA'u8)) >> 1
+  a3 ^= (((x << 1) and a1) xor ((a1 << 1) and x)) and extend[T](0xAA'u8)
+  a4 = a2 and a1
+  a4 ^= (a4 and extend[T](0xAA'u8)) >> 1;
+  a4 ^= (((a2 << 1) and a1) xor ((a1 << 1) and a2)) and extend[T](0xAA'u8)
+  a5 = (a3 and extend[T](0xCC'u8)) >> 2
+  a3 ^= ((a4 << 2) xor a4) and extend[T](0xCC'u8)
+  a4 = a5 and extend[T](0x22'u8)
+  a4 |= a4 >> 1
+  a4 ^= (a5 << 1) and extend[T](0x22'u8)
+  a3 ^= a4
+  a5 = a3 and extend[T](0xA0'u8)
+  a5 |= a5 >> 1
+  a5 ^= (a3 << 1) and extend[T](0xA0'u8)
+  a4 = a5 and extend[T](0xC0'u8)
+  a6 = a4 >> 2
+  a4 ^= (a5 << 2) and extend[T](0xC0'u8)
+  a5 = a6 and extend[T](0x20'u8)
+  a5 |= a5 >> 1
+  a5 ^= (a6 << 1) and extend[T](0x20'u8)
+  a4 |= a5
+  a3 ^= a4 >> 4
+  a3 &= extend[T](0x0F'u8)
+  a2 = a3
+  a2 ^= (a3 and extend[T](0x0C'u8))
+  a4 = a3 & a2
+  a4 ^= (a4 and extend[T](0x0A'u8)) >> 1;
+  a4 ^= (((a3 << 1) and a2) xor ((a2 << 1) and a3)) and extend[T](0x0A'u8)
+  a5 = a4 and extend[T](0x08'u8)
+  a5 |= a5 >> 1
+  a5 ^= (a4 << 1) and extend[T](0x08'u8)
+  a4 ^= a5 >> 2
+  a4 &= extend[T](0x03'u8)
+  a4 ^= (a4 and extend[T](0x02'u8)) >> 1
+  a4 |= a4 << 2
+  a3 = a2 and a4
+  a3 ^= (a3 and extend[T](0x0A'u8)) >> 1;
+  a3 ^= (((a2 << 1) and a4) xor ((a4 << 1) and a2)) and extend[T](0x0A'u8)
+  a3 |= a3 << 4
+  a2 = ((a1 and extend[T](0xCC'u8)) >> 2) or ((a1 and extend[T](0x33'u8)) << 2)
+  x = a1 and a3
+  x ^= (x and extend[T](0xAA'u8)) >> 1
+  x ^= (((a1 << 1) and a3) xor ((a3 << 1) and a1)) and extend[T](0xAA'u8)
+  a4 = a2 and a3;
+  a4 ^= (a4 and extend[T](0xAA'u8)) >> 1;
+  a4 ^= (((a2 << 1) and a3) xor ((a3 << 1) and a2)) and extend[T](0xAA'u8)
+  a5 = (x and extend[T](0xCC'u8)) >> 2;
+  x ^= ((a4 << 2) xor a4) and extend[T](0xCC'u8)
+  a4 = a5 and extend[T](0x22'u8)
+  a4 |= a4 >> 1;
+  a4 ^= (a5 << 1) and extend[T](0x22'u8)
+  x ^= a4
+
+  state[] = x
+]#
+
+# add roundKey to state
+# use UncheckedArray to save copy/range check cost
+template addRoundKey[N: static int, T](state: ptr array[N, T], key: ptr UncheckedArray[T]): void =
+  when (N == 4) and (T is uint32):
+    # use static to unroll for loop in compile time
+    for i in static(0 ..< 4):
+      state[i] = state[i] xor key[i]
+  elif (N == 16) and (T is uint8):
+    # use static to unroll for loop in compile time
+    for i in static(0 ..< 16):
+      state[i] = state[i] xor key[i]
+
+# do S-Box replacing by word unit
+template subWord(input: uint32): uint32 =
+  # copy input to output
+  var output: uint32 = input
+  # cast ptr uint32 to ptr array[4, uint8]
+  var address: ptr array[4, uint8] = cast[ptr array[4, uint8]](addr output)
+  # user static to unroll for loop in compile time
+  for i in static(0 ..< 4):
+    # replace state's byte to S-Box Encrypt result
+    address[i] = SBoxE[address[][i]]
+
+  output
+
+# do S-Box replacing by byte unit
+# use column-major input
+template subByte[N, T](state: ptr array[N, T]): void =
+  # cast ptr array[N, T] to ptr array[16, uint8]
+  var address: ptr array[16, uint8] = cast[ptr array[16, uint8]](state)
+  # use static to unroll for loop in compile time
+  for i in static(0 ..< 16):
+    # replace state's byte to S-Box Encrypt result
+    address[i] = SBoxE[address[][i]]
+
+# do inverse S-Box replacing by byte unit
+# use column-major input
+template invSubByte[N, T](state: ptr array[N, T]): void =
+  var address: ptr array[16, uint8] = cast[ptr array[16, uint8]](state)
+  for i in static(0 ..< 16):
+    address[i] = SBoxD[address[][i]]
+
+template shiftRows(state: ptr array[16, uint8]): void =
   var matrix: array[4, array[4, uint8]] = [
     [state[0], state[4], state[8], state[12]],
     [state[1], state[5], state[9], state[13]],
@@ -159,13 +943,13 @@ template shiftRows(state: var array[16, uint8]): void =
     [state[3], state[7], state[11], state[15]]
   ]
 
-  for col in 0 ..< 4:
+  for col in static(0 ..< 4):
     state[col * 4 + 0] = matrix[0][col]
     state[col * 4 + 1] = matrix[1][(col + 1) mod 4]
     state[col * 4 + 2] = matrix[2][(col + 2) mod 4]  
     state[col * 4 + 3] = matrix[3][(col + 3) mod 4]
 
-template invShiftRows(state: var array[16, uint8]): void =
+template invShiftRows(state: ptr array[16, uint8]): void =
   var matrix: array[4, array[4, uint8]] = [
     [state[0], state[4], state[8], state[12]],
     [state[1], state[5], state[9], state[13]],
@@ -173,36 +957,71 @@ template invShiftRows(state: var array[16, uint8]): void =
     [state[3], state[7], state[11], state[15]]
   ]
 
-  for col in 0 ..< 4:
+  for col in static(0 ..< 4):
     state[col * 4 + 0] = matrix[0][col]
     state[col * 4 + 1] = matrix[1][(col + 3) mod 4]
-    state[col * 4 + 2] = matrix[2][(col + 2) mod 4]  
+    state[col * 4 + 2] = matrix[2][(col + 2) mod 4]
     state[col * 4 + 3] = matrix[3][(col + 1) mod 4]
+
+template shiftRows(state: ptr array[4, uint32]): void =
+  let column0 = state[0]
+  let column1 = state[1]
+  let column2 = state[2]
+  let column3 = state[3]
+
+  state[0] = (column0 and 0x000000FF'u32) or (column1 and 0x0000FF00'u32) or (column2 and 0x00FF0000'u32) or (column3 and 0xFF000000'u32)
+  state[1] = (column1 and 0x000000FF'u32) or (column2 and 0x0000FF00'u32) or (column3 and 0x00FF0000'u32) or (column0 and 0xFF000000'u32)
+  state[2] = (column2 and 0x000000FF'u32) or (column3 and 0x0000FF00'u32) or (column0 and 0x00FF0000'u32) or (column1 and 0xFF000000'u32)
+  state[3] = (column3 and 0x000000FF'u32) or (column0 and 0x0000FF00'u32) or (column1 and 0x00FF0000'u32) or (column2 and 0xFF000000'u32)
+
+template invShiftRows(state: ptr array[4, uint32]) =
+  let column0 = state[0]
+  let column1 = state[1]
+  let column2 = state[2]
+  let column3 = state[3]
+
+  state[0] = (column0 and 0x000000FF'u32) or (column3 and 0x0000FF00'u32) or (column2 and 0x00FF0000'u32) or (column1 and 0xFF000000'u32)
+  state[1] = (column1 and 0x000000FF'u32) or (column0 and 0x0000FF00'u32) or (column3 and 0x00FF0000'u32) or (column2 and 0xFF000000'u32)
+  state[2] = (column2 and 0x000000FF'u32) or (column1 and 0x0000FF00'u32) or (column0 and 0x00FF0000'u32) or (column3 and 0xFF000000'u32)
+  state[3] = (column3 and 0x000000FF'u32) or (column2 and 0x0000FF00'u32) or (column1 and 0x00FF0000'u32) or (column0 and 0xFF000000'u32)
+
+template shiftRows(state: ptr array[2, uint64]) =
+  let c01 = state[0]
+  let c23 = state[1]
+
+  state[0] = (c01 and 0x000000FF_000000FF'u64) or ((c01 and 0x0000FF00_00000000'u64) shr 32) or ((c23 and 0x00000000_0000FF00'u64) shl 32) or (c23 and 0x00FF0000_00FF0000'u64) or ((c23 and 0xFF000000_00000000'u64) shr 32) or ((c01 and 0x00000000_FF000000'u64) shl 32)
+  state[1] = (c23 and 0x000000FF_000000FF'u64) or ((c23 and 0x0000FF00_00000000'u64) shr 32) or ((c01 and 0x00000000_0000FF00'u64) shl 32) or (c01 and 0x00FF0000_00FF0000'u64) or ((c01 and 0xFF000000_00000000'u64) shr 32) or ((c23 and 0x00000000_FF000000'u64) shl 32)
+
+template invShiftRows(state: ptr array[2, uint64]) =
+  let c01 = state[0]
+  let c23 = state[1]
+
+  state[0] = (c01 and 0x000000FF_000000FF'u64) or ((c23 and 0x0000FF00_00000000'u64) shr 32) or ((c01 and 0x00000000_0000FF00'u64) shl 32) or (c23 and 0x00FF0000_00FF0000'u64) or ((c01 and 0xFF000000_00000000'u64) shr 32) or ((c23 and 0x00000000_FF000000'u64) shl 32)
+  state[1] = (c23 and 0x000000FF_000000FF'u64) or ((c01 and 0x0000FF00_00000000'u64) shr 32) or ((c23 and 0x00000000_0000FF00'u64) shl 32) or (c01 and 0x00FF0000_00FF0000'u64) or ((c23 and 0xFF000000_00000000'u64) shr 32) or ((c01 and 0x00000000_FF000000'u64) shl 32)
 
 template xtime(x: uint8): uint8 =
   ((x shl 1) xor (((x shr 7) and 1) * 0x1B'u8)) and 0xFF'u8
 
-template gfMul(a, b: uint8): uint8 =
-  case b
-  of 0x01: a
-  of 0x02: xtime(a)
-  of 0x03: xtime(a) xor a
-  of 0x09:
+template gfMul(a: uint8, b: static uint8): uint8 =
+  when b == 0x01: a
+  elif b == 0x02: xtime(a)
+  elif b == 0x03: xtime(a) xor a
+  elif b == 0x09:
     let a2 = xtime(a)
     let a4 = xtime(a2)
     let a8 = xtime(a4)
     a8 xor a
-  of 0x0B:
+  elif b == 0x0B:
     let a2 = xtime(a)
     let a4 = xtime(a2)
     let a8 = xtime(a4)
     a8 xor a2 xor a
-  of 0x0D:
+  elif b == 0x0D:
     let a2 = xtime(a)
     let a4 = xtime(a2)
     let a8 = xtime(a4)
     a8 xor a4 xor a
-  of 0x0E:
+  elif b == 0x0E:
     let a2 = xtime(a)
     let a4 = xtime(a2)
     let a8 = xtime(a4)
@@ -221,20 +1040,505 @@ template gfMul(a, b: uint8): uint8 =
       bb = bb shr 1
     res
 
-template mixColumns(state: var array[16, uint8]): void =
-  for i in 0 ..< 4:
-    var a: array[4, uint8] = [state[i * 4 + 0], state[i * 4 + 1], state[i * 4 + 2], state[i * 4 + 3]]
+template xtime(x: uint32): uint32 =
+  ((x and 0x7F7F7F7F'u32) shl 1) xor (((x and 0x80808080'u32) shr 7) * 0x1B'u32)
 
-    state[i * 4 + 0] = (gfMul(a[0], 0x02'u8) xor gfMul(a[1], 0x03'u8) xor gfMul(a[2], 0x01'u8) xor gfMul(a[3], 0x01'u8))
-    state[i * 4 + 1] = (gfMul(a[0], 0x01'u8) xor gfMul(a[1], 0x02'u8) xor gfMul(a[2], 0x03'u8) xor gfMul(a[3], 0x01'u8))
-    state[i * 4 + 2] = (gfMul(a[0], 0x01'u8) xor gfMul(a[1], 0x01'u8) xor gfMul(a[2], 0x02'u8) xor gfMul(a[3], 0x03'u8))
-    state[i * 4 + 3] = (gfMul(a[0], 0x03'u8) xor gfMul(a[1], 0x01'u8) xor gfMul(a[2], 0x01'u8) xor gfMul(a[3], 0x02'u8))
+template leftRotate8(v: uint32): uint32 = (v shl 8) or (v shr 24)
+template leftRotate16(v: uint32): uint32 = (v shl 16) or (v shr 16)
+template leftRotate24(v: uint32): uint32 = (v shl 24) or (v shr 8)
 
-template invMixColumns(state: var array[16, uint8]): void =
-  for i in 0 ..< 4:
-    var a: array[4, uint8] = [state[i * 4 + 0], state[i * 4 + 1], state[i * 4 + 2], state[i * 4 + 3]]
+template mixColumns(state: ptr array[16, uint8]): void =
+  for i in static(0 ..< 4):
+    let a0: uint8 = state[i * 4 + 0]
+    let a1: uint8 = state[i * 4 + 1]
+    let a2: uint8 = state[i * 4 + 2]
+    let a3: uint8 = state[i * 4 + 3]
 
-    state[i * 4 + 0] = (gfMul(a[0], 0x0e'u8) xor gfMul(a[1], 0x0b'u8) xor gfMul(a[2], 0x0d'u8) xor gfMul(a[3], 0x09'u8))
-    state[i * 4 + 1] = (gfMul(a[0], 0x09'u8) xor gfMul(a[1], 0x0e'u8) xor gfMul(a[2], 0x0b'u8) xor gfMul(a[3], 0x0d'u8))
-    state[i * 4 + 2] = (gfMul(a[0], 0x0d'u8) xor gfMul(a[1], 0x09'u8) xor gfMul(a[2], 0x0e'u8) xor gfMul(a[3], 0x0b'u8))
-    state[i * 4 + 3] = (gfMul(a[0], 0x0b'u8) xor gfMul(a[1], 0x0d'u8) xor gfMul(a[2], 0x09'u8) xor gfMul(a[3], 0x0e'u8))    
+    state[i * 4 + 0] = (gfMul(a0, 0x02'u8) xor gfMul(a1, 0x03'u8) xor gfMul(a2, 0x01'u8) xor gfMul(a3, 0x01'u8))
+    state[i * 4 + 1] = (gfMul(a0, 0x01'u8) xor gfMul(a1, 0x02'u8) xor gfMul(a2, 0x03'u8) xor gfMul(a3, 0x01'u8))
+    state[i * 4 + 2] = (gfMul(a0, 0x01'u8) xor gfMul(a1, 0x01'u8) xor gfMul(a2, 0x02'u8) xor gfMul(a3, 0x03'u8))
+    state[i * 4 + 3] = (gfMul(a0, 0x03'u8) xor gfMul(a1, 0x01'u8) xor gfMul(a2, 0x01'u8) xor gfMul(a3, 0x02'u8))
+
+template invMixColumns(state: ptr array[16, uint8]): void =
+  for i in static(0 ..< 4):
+    let a0: uint8 = state[i * 4 + 0]
+    let a1: uint8 = state[i * 4 + 1]
+    let a2: uint8 = state[i * 4 + 2]
+    let a3: uint8 = state[i * 4 + 3]
+
+    state[i * 4 + 0] = (gfMul(a0, 0x0e'u8) xor gfMul(a1, 0x0b'u8) xor gfMul(a2, 0x0d'u8) xor gfMul(a3, 0x09'u8))
+    state[i * 4 + 1] = (gfMul(a0, 0x09'u8) xor gfMul(a1, 0x0e'u8) xor gfMul(a2, 0x0b'u8) xor gfMul(a3, 0x0d'u8))
+    state[i * 4 + 2] = (gfMul(a0, 0x0d'u8) xor gfMul(a1, 0x09'u8) xor gfMul(a2, 0x0e'u8) xor gfMul(a3, 0x0b'u8))
+    state[i * 4 + 3] = (gfMul(a0, 0x0b'u8) xor gfMul(a1, 0x0d'u8) xor gfMul(a2, 0x09'u8) xor gfMul(a3, 0x0e'u8))
+
+template mixColumns(state: ptr array[4, uint32]): void =
+  for i in static(0 ..< 4):
+    let x: uint32 = state[i]
+    let x2: uint32 = xtime(x)
+    let x3: uint32 = x2 xor x
+
+    state[i] = x2 xor leftRotate24(x3) xor leftRotate16(x) xor leftRotate8(x)
+
+template invMixColumns(state: ptr array[4, uint32]): void =
+  for i in static(0 ..< 4):
+    let x: uint32 = state[i]
+    let x2: uint32 = xtime(x)
+    let x4: uint32 = xtime(x2)
+    let x8: uint32 = xtime(x4)
+
+    let m9: uint32 = x8 xor x
+    let m11: uint32 = x8 xor x2 xor x
+    let m13: uint32 = x8 xor x4 xor x
+    let m14: uint32 = x8 xor x4 xor x2
+
+    state[i] = m14 xor leftRotate24(m11) xor leftRotate16(m13) xor leftRotate8(m9)
+#[
+template aesInitPC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[NK, T]): void =
+  var temp: uint32
+  static:
+    doAssert NK == 4 or NK == 6 or NK == 8, "NK must be 16 or 24 or 32."
+
+  when ctx.keyBits == 128:
+    for i in static(0 ..< 4):
+      ctx.roundKey[i] = userKey[i]
+
+    for i in static(0 ..< 10):
+      temp = ctx.roundKey[i * 4 + 3]
+
+      ctx.roundKey[i * 4 + 4] = ctx.roundKey[i * 4 + 0] xor
+      (Te2[(temp shr 16) and 0xFF'u32] and 0xFF000000'u32) xor
+      (Te3[(temp shr  8) and 0xFF'u32] and 0x00FF0000'u32) xor
+      (Te0[(temp       ) and 0xFF'u32] and 0x0000FF00'u32) xor
+      (Te1[(temp shr 24) and 0xFF'u32] and 0x000000FF'u32) xor
+      Rcon[i]
+
+      ctx.roundKey[i * 4 + 5] = ctx.roundKey[i * 4 + 1] xor ctx.roundKey[i * 4 + 4]
+      ctx.roundKey[i * 4 + 6] = ctx.roundKey[i * 4 + 2] xor ctx.roundKey[i * 4 + 5]
+      ctx.roundKey[i * 4 + 7] = ctx.roundKey[i * 4 + 3] xor ctx.roundKey[i * 4 + 6]
+  elif ctx.keyBits == 192:
+    for i in static(0 ..< 6):
+      ctx.roundKey[i] = userKey[i]
+
+    for i in static(6 ..< 52):
+      temp = ctx.roundKey[i - 1]
+      if i mod 6 == 0:
+        temp = (Te2[(temp shr 16) and 0xFF'u32] and 0xFF000000'u32) xor
+               (Te3[(temp shr  8) and 0xFF'u32] and 0x00FF0000'u32) xor
+               (Te0[(temp       ) and 0xFF'u32] and 0x0000FF00'u32) xor
+               (Te1[(temp shr 24) and 0xFF'u32] and 0x000000FF'u32) xor
+               Rcon[(i div 6) - 1]
+
+      ctx.roundKey[i] = ctx.roundKey[i - 6] xor temp
+  elif ctx.keyBits == 256:
+    for i in static(0 ..< 8):
+      ctx.roundKey[i] = userKey[i]
+
+    for i in static(8 ..< 60):
+      temp = ctx.roundKey[i - 1]
+      if i mod 8 == 0:
+        temp = (Te2[(temp shr 16) and 0xFF'u32] and 0xFF000000'u32) xor
+               (Te3[(temp shr  8) and 0xFF'u32] and 0x00FF0000'u32) xor
+               (Te0[(temp       ) and 0xFF'u32] and 0x0000FF00'u32) xor
+               (Te1[(temp shr 24) and 0xFF'u32] and 0x000000FF'u32) xor
+               Rcon[(i div 8) - 1]
+      elif i mod 8 == 4:
+        temp = (Te2[(temp shr 24) and 0xFF'u32] and 0xFF000000'u32) xor
+               (Te3[(temp shr 16) and 0xFF'u32] and 0x00FF0000'u32) xor
+               (Te0[(temp shr  8) and 0xFF'u32] and 0x0000FF00'u32) xor
+               (Te1[(temp       ) and 0xFF'u32] and 0x000000FF'u32)
+
+      ctx.roundKey[i] = ctx.roundKey[i - 8] xor temp
+]#
+template aesInitC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[NK, T]): void =
+  var temp: uint32 = 0
+
+  when (Bits == 32 or Bits == 64) and T is uint32:
+    static:
+      doAssert NK == 4 or NK == 6 or NK == 8, "NK must be 16 or 24 or 32."
+    when ctx.keyBits == 128:
+      for i in static(0 ..< 4):
+        ctx.roundKey[i] = userKey[i]
+    elif ctx.keyBits == 192:
+      for i in static(0 ..< 6):
+        ctx.roundKey[i] = userKey[i]
+    elif ctx.keyBits == 256:
+      for i in static(0 ..< 8):
+        ctx.roundKey[i] = userKey[i]
+
+    for i in static((ctx.keyBits div 32) ..< ctx.roundKey.len):
+      temp = ctx.roundKey[i - 1]
+      if i mod (ctx.keyBits div 32) == 0:
+        temp = rotateLeftBits(temp, 24)
+        temp = subWord(temp) xor Rcon[i div (ctx.keyBits div 32)]
+      elif ((ctx.keyBits div 32) > 6) and (i mod (ctx.keyBits div 32) == 4):
+        temp = subWord(temp)
+      ctx.roundKey[i] = ctx.roundKey[i - (ctx.keyBits div 32)] xor temp
+  else:
+    static:
+      doAssert NK == 16 or NK == 24 or NK == 32, "NK must be 16 or 24 or 32."
+    when ctx.keyBits == 128:
+      for i in static(0 ..< 16):
+        ctx.roundKey[i] = userKey[i]
+    elif ctx.keyBits == 192:
+      for i in static(0 ..< 24):
+        ctx.roundKey[i] = userKey[i]
+    elif ctx.keyBits == 256:
+      for i in static(0 ..< 32):
+        ctx.roundKey[i] = userKey[i]
+
+    for i in countup(ctx.keyBIts div 8, (ctx.roundKey.len + 1) - 1, 4):
+      var t0 = ctx.roundKey[i - 4]
+      var t1 = ctx.roundKey[i - 3]
+      var t2 = ctx.roundKey[i - 2]
+      var t3 = ctx.roundKey[i - 1]
+
+      let wordIdx = i div 4
+
+      if wordIdx mod (ctx.keyBits div 32) == 0:
+          let k = t0
+          t0 = t1; t1 = t2; t2 = t3; t3 = k
+
+          t0 = SBoxE[t0] xor Rcon[wordIdx div (ctx.keyBits div 32)]
+          t1 = SBoxE[t1]
+          t2 = SBoxE[t2]
+          t3 = SBoxE[t3]
+
+      elif ((ctx.keyBits div 32) > 6) and (wordIdx mod (ctx.keyBits div 32) == 4):
+          t0 = SBoxE[t0]
+          t1 = SBoxE[t1]
+          t2 = SBoxE[t2]
+          t3 = SBoxE[t3]
+
+      ctx.roundKey[i]     = ctx.roundKey[i - (ctx.keyBits div 8)] xor t0
+      ctx.roundKey[i + 1] = ctx.roundKey[i - (ctx.keyBits div 8) + 1] xor t1
+      ctx.roundKey[i + 2] = ctx.roundKey[i - (ctx.keyBits div 8) + 2] xor t2
+      ctx.roundKey[i + 3] = ctx.roundKey[i - (ctx.keyBits div 8) + 3] xor t3
+
+template aesEncryptC(ctx: RijndaelCtx, input: lent openArray[uint8]): array[16, uint8] =
+  var state: array[16, uint8]
+  for i in static(0 ..< 16):
+    state[i] = input[i]
+  when Bits == 32 or Bits == 64:
+    addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
+
+    when ctx.keyBits == 128:
+      for i in static(1 .. 9):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(cast[ptr array[4, uint32]](addr state))
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
+    elif ctx.keyBits == 192:
+      for i in static(1 .. 11):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(cast[ptr array[4, uint32]](addr state))
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
+    elif ctx.keyBits == 256:
+      for i in static(1 .. 13):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(cast[ptr array[4, uint32]](addr state))
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
+  else:
+    addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
+    when ctx.keyBits == 128:
+      for i in static(1 .. 9):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(addr state)
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
+    elif ctx.keyBits == 192:
+      for i in static(1 .. 11):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(addr state)
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
+    elif ctx.keyBits == 256:
+      for i in static(1 .. 13):
+        subByte(addr state)
+        shiftRows(addr state)
+        mixColumns(addr state)
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+
+      subByte(addr state)
+      shiftRows(addr state)
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
+
+  state
+
+template aesDecryptC(ctx: RijndaelCtx, input: lent openArray[uint8]): array[16, uint8] =
+  var state: array[16, uint8]
+  for i in static(0 ..< 16):
+    state[i] = input[i]
+  when Bits == 32 or Bits == 64:
+    when ctx.keyBits == 128:
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for j in static(0 .. 8):
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(9 - j) * 4]))
+        invMixColumns(cast[ptr array[4, uint32]](addr state))
+        invShiftRows(addr state)
+        invSubByte(addr state)
+    elif ctx.keyBits == 192:
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for j in static(0 .. 10):
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(11 - j) * 4]))
+        invMixColumns(cast[ptr array[4, uint32]](addr state))
+        invShiftRows(addr state)
+        invSubByte(addr state)
+    elif ctx.keyBits == 256:
+      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for j in static(0 .. 12):
+        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(13 - j) * 4]))
+        invMixColumns(cast[ptr array[4, uint32]](addr state))
+        invShiftRows(addr state)
+        invSubByte(addr state)
+
+    addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
+  else:
+    when ctx.keyBits == 128:
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for i in static(0 .. 8):
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(9 - i) * 16]))
+        invMixColumns(addr state)
+        invShiftRows(addr state)
+        invSubByte(addr state)
+    elif ctx.keyBits == 192:
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for i in static(0 .. 10):
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(11 - i) * 16]))
+        invMixColumns(addr state)
+        invShiftRows(addr state)
+        invSubByte(addr state)
+    elif ctx.keyBits == 256:
+      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
+      invShiftRows(addr state)
+      invSubByte(addr state)
+      for i in static(0 .. 12):
+        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(13 - i) * 16]))
+        invMixColumns(addr state)
+        invShiftRows(addr state)
+        invSubByte(addr state)
+
+    addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
+
+  state
+
+# export wrapper
+when defined(templateOpt):
+  template aes128Init*(ctx: var AES128Ctx, userKey: array[16, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[4, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  template aes128Encrypt*(ctx: var AES128Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  template aes128Decrypt*(ctx: var AES128Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+
+  template aes192Init*(ctx: var AES192Ctx, userKey: array[24, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[6, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  template aes192Encrypt*(ctx: var AES192Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  template aes192Decrypt*(ctx: var AES192Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+
+  template aes256Init*(ctx: var AES256Ctx, userKey: array[32, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[8, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  template aes256Encrypt*(ctx: var AES256Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  template aes256Decrypt*(ctx: var AES256Ctx, input: lent openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+else:
+  proc aes128Init*(ctx: var AES128Ctx, userKey: array[16, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[4, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  proc aes128Encrypt*(ctx: var AES128Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  proc aes128Decrypt*(ctx: var AES128Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+
+  proc aes192Init*(ctx: var AES192Ctx, userKey: array[24, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[6, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  proc aes192Encrypt*(ctx: var AES192Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  proc aes192Decrypt*(ctx: var AES192Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+
+  proc aes256Init*(ctx: var AES256Ctx, userKey: array[32, uint8]): void =
+    when Bits == 64 or Bits == 32:
+      aesInitC(ctx, cast[ptr array[8, uint32]](addr userKey))
+    else:
+      aesInitC(ctx, addr userKey)
+
+  proc aes256Encrypt*(ctx: var AES256Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesEncryptC(ctx, input)
+
+  proc aes256Decrypt*(ctx: var AES256Ctx, input: openArray[uint8]): array[16, uint8] =
+    aesDecryptC(ctx, input)
+
+var a: array[16, uint8] = [0x00'u8, 0x11'u8, 0x22'u8, 0x33'u8, 0x44'u8, 0x55'u8, 0x66'u8, 0x77'u8, 0x88'u8, 0x99'u8, 0xAA'u8, 0xBB'u8, 0xCC'u8, 0xDD'u8, 0xEE'u8, 0xFF'u8]
+var b: array[4, uint32] = [0x33221100'u32, 0x77665544'u32, 0xBBAA9988'u32, 0xFFEEDDCC'u32]
+var c: array[2, uint64] = [0x7766554433221100'u64, 0xFFEEDDCCBBAA9988'u64]
+var d: array[16, uint8] = [0xd4'u8, 0xbf'u8, 0x5d'u8, 0x30'u8, 0xe0'u8, 0xb4'u8, 0x52'u8, 0xae'u8, 0xb8'u8, 0x41'u8, 0x11'u8, 0xf1'u8, 0x1e'u8, 0x27'u8, 0x98'u8, 0xe5'u8]
+var e: array[16, uint8] = [0x00'u8, 0x11'u8, 0x22'u8, 0x33'u8, 0x44'u8, 0x55'u8, 0x66'u8, 0x77'u8, 0x88'u8, 0x99'u8, 0xAA'u8, 0xBB'u8, 0xCC'u8, 0xDD'u8, 0xEE'u8, 0xFF'u8]
+var f: array[2, uint64] = [0x7766554433221100'u64, 0xFFEEDDCCBBAA9988'u64]
+var input: array[16, uint8] = [0x32'u8, 0x43'u8, 0xF6'u8, 0xA8'u8, 0x88'u8, 0x5A'u8, 0x30'u8, 0x8D'u8, 0x31'u8, 0x31'u8, 0x98'u8, 0xA2'u8, 0xE0'u8, 0x37'u8, 0x07'u8, 0x34'u8]
+var userKey: array[16, uint8] = [0x2B'u8, 0x7E'u8, 0x15'u8, 0x16'u8, 0x28'u8, 0xAE'u8, 0xD2'u8, 0xA6'u8, 0xAB'u8, 0xF7'u8, 0x15'u8, 0x88'u8, 0x09'u8, 0xCF'u8, 0x4F'u8, 0x3C'u8]
+#[
+var ctx: AES128Ctx
+aes128Init(ctx, userKey)
+echo "Cipher Text : ", binToHex(aes128Encrypt(ctx, input))
+echo "Plain Text : ", binToHex(aes128Decrypt(ctx, aes128Encrypt(ctx, input)))
+]#
+#[
+var ctx1: AES128Ctx
+var ctx2: AES128Ctx
+aesInitC(ctx1, cast[ptr array[4, uint32]](addr userKey))
+echo binToHex(cast[array[176, uint8]](ctx1.roundKey))
+aesInitPC(ctx2, cast[ptr array[4, uint32]](addr userKey))
+echo binToHex(cast[array[176, uint8]](ctx2.roundKey))
+]#
+template benchmark(name: string, code: untyped) =
+  let start = getMonoTime()
+  code
+  let elapsed = getMonoTime() - start
+  echo name, " took: ", elapsed.inMicroseconds, " μs (", elapsed.inNanoseconds, " ns)"
+
+var ctx: AES128Ctx
+aes128Init(ctx, userKey)
+
+benchmark("AES Encrypt"):
+  for i in 1 .. 1_000_000:
+    let a = aes128Encrypt(ctx, input)
+
+benchmark("AES Decrypt"):
+  for i in 1 .. 1_000_000:
+    let a = aes128Decrypt(ctx, input)
+
+benchmark("AES mixColumns 8bits"):
+  for i in 1 .. 1_000_000:
+    mixColumns(addr d)
+
+benchmark("AES invMixColumns 8bits"):
+  for i in 1 .. 1_000_000:
+    invMixColumns(addr d)
+
+benchmark("AES mixColumns 32bits"):
+  for i in 1 .. 1_000_000:
+    mixColumns(cast[ptr array[4, uint32]](addr d))
+
+benchmark("AES invMixColumns 32bits"):
+  for i in 1 .. 1_000_000:
+    invMixColumns(cast[ptr array[4, uint32]](addr d))
+benchmark("AES shiftRows 8bits"):
+  for i in 1 .. 1_000_000:
+    shiftRows(addr a)
+
+benchmark("AES invShiftRows 8bits"):
+  for i in 1 .. 1_000_000:
+    invShiftRows(addr a)
+
+benchmark("AES shiftRows 32bits"):
+  for i in 1 .. 1_000_000:
+    shiftRows(addr b)
+
+benchmark("AES invShiftRows 32bits"):
+  for i in 1 .. 1_000_000:
+    invShiftRows(addr b)
+
+benchmark("AES shiftRows 64bits"):
+  for i in 1 .. 1_000_000:
+    shiftRows(addr c)
+
+benchmark("AES invShiftRows 64bits"):
+  for i in 1 .. 1_000_000:
+    invShiftRows(addr c)
+
+benchmark("AES sub 8bits"):
+  for i in 1 .. 1_000_000:
+    subByte(addr a)
+
+benchmark("AES invSub 8bits"):
+  for i in 1 .. 1_000_000:
+    invSubByte(addr a)
+
+#[
+var x: array[16, uint8] = [0x19'u8, 0x3D'u8, 0xE3'u8, 0xBE'u8, 0xA0'u8, 0xF4'u8, 0xE2'u8, 0x2B'u8, 0x9A'u8, 0xC6'u8, 0x8D'u8, 0x2A'u8, 0xE9'u8, 0xF8'u8, 0x48'u8, 0x08'u8]
+var k: array[16, uint8] = [0xA0'u8, 0xFA'u8, 0xFE'u8, 0x17'u8, 0x88'u8, 0x54'u8, 0x2C'u8, 0xB1'u8, 0x23'u8, 0xA3'u8, 0x39'u8, 0x39'u8, 0x2A'u8, 0x6C'u8, 0x76'u8, 0x05'u8]
+
+subByte(addr x)
+echo binToHex(x)
+shiftRows(addr x)
+echo binToHex(x)
+mixColumns(cast[ptr array[4, uint32]](addr x))
+echo binToHex(x)
+addRoundKey(cast[ptr array[4, uint32]](addr x), cast[ptr UncheckedArray[uint32]](addr k[0]))
+echo binToHex(x)
+
+addRoundKey(cast[ptr array[4, uint32]](addr x), cast[ptr UncheckedArray[uint32]](addr k[0]))
+echo binToHex(x)
+invMixColumns(cast[ptr array[4, uint32]](addr x))
+echo binToHex(x)
+invShiftRows(addr x)
+echo binToHex(x)
+invSubByte(addr x)
+echo binToHex(x)
+]#
+
+#[
+#subGeneric(addr f[0])
+#subGeneric(addr f[1])
+#echo "S-Box 64bits : ", binToHex(cast[array[16, uint8]](f))
+
+]#
