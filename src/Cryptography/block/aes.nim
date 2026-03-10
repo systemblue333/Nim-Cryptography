@@ -637,43 +637,22 @@ const
 const
   Bits*: int = sizeof(int) * 8
 
-when Bits == 64:
-  # Rijndael general context for 64bits
-  type
-    RijndaelCtx*[keyBits: static uint] = object
-      when keyBits == 128:
-        roundKey*: array[44, uint32]
-      elif keyBits == 192:
-        roundKey*: array[52, uint32]
-      elif keyBits == 256:
-        roundKey*: array[60, uint32]
-elif Bits == 32:
-  # Rijndael general context for 32bits
-  type
-    RijndaelCtx*[keyBits: static uint] = object
-      when keyBits == 128:
-        roundKey*: array[44, uint32]
-      elif keyBits == 192:
-        roundKey*: array[52, uint32]
-      elif keyBits == 256:
-        roundKey*: array[60, uint32]
-else:
-  # Rijndael general context for 8bits
-  type
-    RijndaelCtx*[keyBits: static uint] = object
-      case k: range[0..256] = keyBits
-      of 128:
-        roundKey*: array[176, uint8]
-      of 192:
-        roundKey*: array[208, uint8]
-      of 256:
-        roundKey*: array[240, uint8]
+template keySize(keyBits: static int): static int =
+  if Bits == 32 or Bits == 64:
+    (if keyBits == 128: 44 elif keyBits == 192: 52 else: 60)
+  else:
+    (if keyBits == 128: 176 elif keyBits == 192: 208 else: 240)
+
+# Rijndael general context for 32bits
+type
+  RijndaelCtx*[keyBits: static int] = object
+    roundKey*: array[keySize(keyBits), uint32]
 
 # declare AES context
 type
-  AES128Ctx* = RijndaelCtx[128]
-  AES192Ctx* = RijndaelCtx[192]
-  AES256Ctx* = RijndaelCtx[256]
+  AES128Ctx* {.exportc: "AES128Ctx", completeStruct.} = RijndaelCtx[128]
+  AES192Ctx* {.exportc: "AES192Ctx", completeStruct.} = RijndaelCtx[192]
+  AES256Ctx* {.exportc: "AES256Ctx", completeStruct.} = RijndaelCtx[256]
 
 # swap bits
 template swap(x: var uint32): uint32 =
@@ -1149,12 +1128,15 @@ template aesInitPC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[N
 
       ctx.roundKey[i] = ctx.roundKey[i - 8] xor temp
 ]#
-template aesInitC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[NK, T]): void =
+
+template aesInitC(ctx: var RijndaelCtx, input: ptr UncheckedArray[uint8]): void =
+  when Bits == 32 or Bits == 64:
+    let userKey: ptr array[ctx.keyBits.int div 32, uint32] = cast[ptr array[ctx.keyBits.int div 32, uint32]](input)
+  else:
+    let userKey: ptr array[ctx.keyBits.int div 8, uint8] = cast[ptr array[ctx.keyBits.int div 8, uint8]](input)
   var temp: uint32 = 0
 
-  when (Bits == 32 or Bits == 64) and T is uint32:
-    static:
-      doAssert NK == 4 or NK == 6 or NK == 8, "NK must be 16 or 24 or 32."
+  when Bits == 32 or Bits == 64:
     when ctx.keyBits == 128:
       for i in static(0 ..< 4):
         ctx.roundKey[i] = userKey[i]
@@ -1174,8 +1156,6 @@ template aesInitC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[NK
         temp = subWord(temp)
       ctx.roundKey[i] = ctx.roundKey[i - (ctx.keyBits div 32)] xor temp
   else:
-    static:
-      doAssert NK == 16 or NK == 24 or NK == 32, "NK must be 16 or 24 or 32."
     when ctx.keyBits == 128:
       for i in static(0 ..< 16):
         ctx.roundKey[i] = userKey[i]
@@ -1214,217 +1194,302 @@ template aesInitC[NK: static int, T](ctx: var RijndaelCtx, userKey: ptr array[NK
       ctx.roundKey[i + 2] = ctx.roundKey[i - (ctx.keyBits div 8) + 2] xor t2
       ctx.roundKey[i + 3] = ctx.roundKey[i - (ctx.keyBits div 8) + 3] xor t3
 
-template aesEncryptC(ctx: RijndaelCtx, input: lent openArray[uint8]): array[16, uint8] =
-  var state: array[16, uint8]
-  for i in static(0 ..< 16):
-    state[i] = input[i]
+template aesEncryptC(ctx: RijndaelCtx, input: ptr UncheckedArray[uint8]): void =
+  let state: ptr array[16, uint8] = cast[ptr array[16, uint8]](input)
+
   when Bits == 32 or Bits == 64:
-    addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
+    let state32: ptr array[4, uint32] = cast[ptr array[4, uint32]](input)
+    addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
 
     when ctx.keyBits == 128:
       for i in static(1 .. 9):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(cast[ptr array[4, uint32]](addr state))
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state32)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
     elif ctx.keyBits == 192:
       for i in static(1 .. 11):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(cast[ptr array[4, uint32]](addr state))
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state32)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
     elif ctx.keyBits == 256:
       for i in static(1 .. 13):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(cast[ptr array[4, uint32]](addr state))
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state32)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[i * 4]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
   else:
-    addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
+    addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
     when ctx.keyBits == 128:
       for i in static(1 .. 9):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(addr state)
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
     elif ctx.keyBits == 192:
       for i in static(1 .. 11):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(addr state)
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
     elif ctx.keyBits == 256:
       for i in static(1 .. 13):
-        subByte(addr state)
-        shiftRows(addr state)
-        mixColumns(addr state)
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
+        subByte(state)
+        shiftRows(state)
+        mixColumns(state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[i * 16]))
 
-      subByte(addr state)
-      shiftRows(addr state)
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
+      subByte(state)
+      shiftRows(state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
 
-  state
-
-template aesDecryptC(ctx: RijndaelCtx, input: lent openArray[uint8]): array[16, uint8] =
-  var state: array[16, uint8]
-  for i in static(0 ..< 16):
-    state[i] = input[i]
+template aesDecryptC(ctx: RijndaelCtx, input: ptr UncheckedArray[uint8]): void =
+  let state: ptr array[16, uint8] = cast[ptr array[16, uint8]](input)
   when Bits == 32 or Bits == 64:
+    let state32: ptr array[4, uint32] = cast[ptr array[4, uint32]](input)
     when ctx.keyBits == 128:
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[40]))
+      invShiftRows(state)
+      invSubByte(state)
       for j in static(0 .. 8):
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(9 - j) * 4]))
-        invMixColumns(cast[ptr array[4, uint32]](addr state))
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(9 - j) * 4]))
+        invMixColumns(state32)
+        invShiftRows(state)
+        invSubByte(state)
     elif ctx.keyBits == 192:
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[48]))
+      invShiftRows(state)
+      invSubByte(state)
       for j in static(0 .. 10):
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(11 - j) * 4]))
-        invMixColumns(cast[ptr array[4, uint32]](addr state))
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(11 - j) * 4]))
+        invMixColumns(state32)
+        invShiftRows(state)
+        invSubByte(state)
     elif ctx.keyBits == 256:
-      addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[56]))
+      invShiftRows(state)
+      invSubByte(state)
       for j in static(0 .. 12):
-        addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(13 - j) * 4]))
-        invMixColumns(cast[ptr array[4, uint32]](addr state))
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[(13 - j) * 4]))
+        invMixColumns(state32)
+        invShiftRows(state)
+        invSubByte(state)
 
-    addRoundKey(cast[ptr array[4, uint32]](addr state), cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
+    addRoundKey(state32, cast[ptr UncheckedArray[uint32]](addr ctx.roundKey[0]))
   else:
     when ctx.keyBits == 128:
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[160]))
+      invShiftRows(state)
+      invSubByte(state)
       for i in static(0 .. 8):
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(9 - i) * 16]))
-        invMixColumns(addr state)
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(9 - i) * 16]))
+        invMixColumns(state)
+        invShiftRows(state)
+        invSubByte(state)
     elif ctx.keyBits == 192:
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[192]))
+      invShiftRows(state)
+      invSubByte(state)
       for i in static(0 .. 10):
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(11 - i) * 16]))
-        invMixColumns(addr state)
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(11 - i) * 16]))
+        invMixColumns(state)
+        invShiftRows(state)
+        invSubByte(state)
     elif ctx.keyBits == 256:
-      addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
-      invShiftRows(addr state)
-      invSubByte(addr state)
+      addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[224]))
+      invShiftRows(state)
+      invSubByte(state)
       for i in static(0 .. 12):
-        addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(13 - i) * 16]))
-        invMixColumns(addr state)
-        invShiftRows(addr state)
-        invSubByte(addr state)
+        addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[(13 - i) * 16]))
+        invMixColumns(state)
+        invShiftRows(state)
+        invSubByte(state)
 
-    addRoundKey(addr state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
-
-  state
+    addRoundKey(state, cast[ptr UncheckedArray[uint8]](addr ctx.roundKey[0]))
 
 # export wrapper
 when defined(templateOpt):
-  template aes128Init*(ctx: var AES128Ctx, userKey: array[16, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[4, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  template aes128Init*(ctx: var AES128Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes128Init*(ctx: var AES128Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes128Init*(ctx: var AES128Ctx, input: ptr array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes128Init*(ctx: var AES128Ctx, input: ptr UncheckedArray[uint8]): void =
+    aesInitC(ctx, input)
 
-  template aes128Encrypt*(ctx: var AES128Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes128Encrypt*(ctx: AES128Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes128Encrypt*(ctx: AES128Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes128Encrypt*(ctx: AES128Ctx, input: ptr array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes128Encrypt*(ctx: AES128Ctx, input: ptr UncheckedArray[uint8]): void =
     aesEncryptC(ctx, input)
 
-  template aes128Decrypt*(ctx: var AES128Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes128Decrypt*(ctx: AES128Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes128Decrypt*(ctx: AES128Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes128Decrypt*(ctx: AES128Ctx, input: ptr array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes128Decrypt*(ctx: AES128Ctx, input: ptr UncheckedArray[uint8]): void =
     aesDecryptC(ctx, input)
 
-  template aes192Init*(ctx: var AES192Ctx, userKey: array[24, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[6, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  template aes192Init*(ctx: var AES192Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes192Init*(ctx: var AES192Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes192Init*(ctx: var AES192Ctx, input: ptr array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes192Init*(ctx: var AES192Ctx, input: ptr UncheckedArray[uint8]): void =
+    aesInitC(ctx, input)
 
-  template aes192Encrypt*(ctx: var AES192Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes192Encrypt*(ctx: AES192Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes192Encrypt*(ctx: AES192Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes192Encrypt*(ctx: AES192Ctx, input: ptr array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes192Encrypt*(ctx: AES192Ctx, input: ptr UncheckedArray[uint8]): void =
     aesEncryptC(ctx, input)
 
-  template aes192Decrypt*(ctx: var AES192Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes192Decrypt*(ctx: AES192Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes192Decrypt*(ctx: AES192Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes192Decrypt*(ctx: AES192Ctx, input: ptr array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes192Decrypt*(ctx: AES192Ctx, input: ptr UncheckedArray[uint8]): void =
     aesDecryptC(ctx, input)
 
-  template aes256Init*(ctx: var AES256Ctx, userKey: array[32, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[8, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  template aes256Init*(ctx: var AES256Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes256Init*(ctx: var AES256Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes256Init*(ctx: var AES256Ctx, input: ptr array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes256Init*(ctx: var AES256Ctx, input: ptr UncheckedArray[uint8]): void =
+    aesInitC(ctx, input)
 
-  template aes256Encrypt*(ctx: var AES256Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes256Encrypt*(ctx: AES256Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes256Encrypt*(ctx: AES256Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes256Encrypt*(ctx: AES256Ctx, input: ptr array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes256Encrypt*(ctx: AES256Ctx, input: ptr UncheckedArray[uint8]): void =
     aesEncryptC(ctx, input)
 
-  template aes256Decrypt*(ctx: var AES256Ctx, input: lent openArray[uint8]): array[16, uint8] =
+  template aes256Decrypt*(ctx: AES256Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  template aes256Decrypt*(ctx: AES256Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  template aes256Decrypt*(ctx: AES256Ctx, input: ptr array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  template aes256Decrypt*(ctx: AES256Ctx, input: ptr UncheckedArray[uint8]): void =
     aesDecryptC(ctx, input)
 else:
-  proc aes128Init*(ctx: var AES128Ctx, userKey: array[16, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[4, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  proc aes128Init*(ctx: var AES128Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes128Init*(ctx: var AES128Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes128Init*(ctx: var AES128Ctx, input: ptr array[16, uint8]): void {.exportc: "aes128Init", cdecl.} =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes128Init*(ctx: var AES128Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes128Init_unchecked", cdecl.} =
+    aesInitC(ctx, input)
 
-  proc aes128Encrypt*(ctx: var AES128Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes128Encrypt*(ctx: AES128Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes128Encrypt*(ctx: AES128Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes128Encrypt*(ctx: AES128Ctx, input: ptr array[16, uint8]): void {.exportc: "aes128Encrypt", cdecl.} =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes128Encrypt*(ctx: AES128Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes128Encrypt_unchecked", cdecl.} =
     aesEncryptC(ctx, input)
 
-  proc aes128Decrypt*(ctx: var AES128Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes128Decrypt*(ctx: AES128Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes128Decrypt*(ctx: AES128Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes128Decrypt*(ctx: AES128Ctx, input: ptr array[16, uint8]): void {.exportc: "aes128Decrypt", cdecl.} =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes128Decrypt*(ctx: AES128Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes128Decrypt_unchecked", cdecl.} =
     aesDecryptC(ctx, input)
 
-  proc aes192Init*(ctx: var AES192Ctx, userKey: array[24, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[6, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  proc aes192Init*(ctx: var AES192Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes192Init*(ctx: var AES192Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes192Init*(ctx: var AES192Ctx, input: ptr array[16, uint8]): void {.exportc: "aes192Init", cdecl.} =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes192Init*(ctx: var AES192Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes192Init_unchecked", cdecl.} =
+    aesInitC(ctx, input)
 
-  proc aes192Encrypt*(ctx: var AES192Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes192Encrypt*(ctx: AES192Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes192Encrypt*(ctx: AES192Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes192Encrypt*(ctx: AES192Ctx, input: ptr array[16, uint8]): void {.exportc: "aes192Encrypt", cdecl.} =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes192Encrypt*(ctx: AES192Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes192Encrypt_unchecked", cdecl.} =
     aesEncryptC(ctx, input)
 
-  proc aes192Decrypt*(ctx: var AES192Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes192Decrypt*(ctx: AES192Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes192Decrypt*(ctx: AES192Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes192Decrypt*(ctx: AES192Ctx, input: ptr array[16, uint8]): void {.exportc: "aes192Decrypt", cdecl.} =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes192Decrypt*(ctx: AES192Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes192Decrypt_unchecked", cdecl.} =
     aesDecryptC(ctx, input)
 
-  proc aes256Init*(ctx: var AES256Ctx, userKey: array[32, uint8]): void =
-    when Bits == 64 or Bits == 32:
-      aesInitC(ctx, cast[ptr array[8, uint32]](addr userKey))
-    else:
-      aesInitC(ctx, addr userKey)
+  proc aes256Init*(ctx: var AES256Ctx, input: openArray[uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes256Init*(ctx: var AES256Ctx, input: array[16, uint8]): void =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes256Init*(ctx: var AES256Ctx, input: ptr array[16, uint8]): void {.exportc: "aes256Init", cdecl.} =
+    aesInitC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes256Init*(ctx: var AES256Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes256Init_unchecked", cdecl.} =
+    aesInitC(ctx, input)
 
-  proc aes256Encrypt*(ctx: var AES256Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes256Encrypt*(ctx: AES256Ctx, input: var openArray[uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes256Encrypt*(ctx: AES256Ctx, input: var array[16, uint8]): void =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes256Encrypt*(ctx: AES256Ctx, input: ptr array[16, uint8]): void {.exportc: "aes256Encrypt", cdecl.} =
+    aesEncryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes256Encrypt*(ctx: AES256Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes256Encrypt_unchecked", cdecl.} =
     aesEncryptC(ctx, input)
 
-  proc aes256Decrypt*(ctx: var AES256Ctx, input: openArray[uint8]): array[16, uint8] =
+  proc aes256Decrypt*(ctx: AES256Ctx, input: var openArray[uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input))
+  proc aes256Decrypt*(ctx: AES256Ctx, input: var array[16, uint8]): void =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](addr input[0]))
+  proc aes256Decrypt*(ctx: AES256Ctx, input: ptr array[16, uint8]): void {.exportc: "aes256Decrypt", cdecl.} =
+    aesDecryptC(ctx, cast[ptr UncheckedArray[uint8]](input))
+  proc aes256Decrypt*(ctx: AES256Ctx, input: ptr UncheckedArray[uint8]): void {.exportc: "aes256Decrypt_unchecked", cdecl.} =
     aesDecryptC(ctx, input)
 
 var a: array[16, uint8] = [0x00'u8, 0x11'u8, 0x22'u8, 0x33'u8, 0x44'u8, 0x55'u8, 0x66'u8, 0x77'u8, 0x88'u8, 0x99'u8, 0xAA'u8, 0xBB'u8, 0xCC'u8, 0xDD'u8, 0xEE'u8, 0xFF'u8]
@@ -1460,11 +1525,11 @@ aes128Init(ctx, userKey)
 
 benchmark("AES Encrypt"):
   for i in 1 .. 1_000_000:
-    let a = aes128Encrypt(ctx, input)
+    aes128Encrypt(ctx, input)
 
 benchmark("AES Decrypt"):
   for i in 1 .. 1_000_000:
-    let a = aes128Decrypt(ctx, input)
+    aes128Decrypt(ctx, input)
 
 benchmark("AES mixColumns 8bits"):
   for i in 1 .. 1_000_000:
@@ -1481,6 +1546,7 @@ benchmark("AES mixColumns 32bits"):
 benchmark("AES invMixColumns 32bits"):
   for i in 1 .. 1_000_000:
     invMixColumns(cast[ptr array[4, uint32]](addr d))
+
 benchmark("AES shiftRows 8bits"):
   for i in 1 .. 1_000_000:
     shiftRows(addr a)
