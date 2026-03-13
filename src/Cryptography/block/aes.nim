@@ -915,26 +915,26 @@ template invSubByte[N, T](state: ptr array[N, T]): void =
     address[i] = SBoxD[address[][i]]
 
 template shiftRows(state: ptr array[16, uint8]): void =
-  var temp1: uint8
+  var temp: uint8
 
-  temp1 = state[1]
+  temp = state[1]
   state[1] = state[5]
   state[5] = state[9]
   state[9] = state[13]
-  state[13] = temp1
+  state[13] = temp
 
-  temp1 = state[2]
+  temp = state[2]
   state[2] = state[10]
   state[10] = temp1
-  temp1 = state[6]
+  temp = state[6]
   state[6] = state[14]
-  state[14] = temp1
+  state[14] = temp
 
-  temp1 = state[7]
+  temp = state[7]
   state[7] = state[3]
   state[3] = state[15]
   state[15] = state[11]
-  state[11] = temp1
+  state[11] = temp
 
 template invShiftRows(state: ptr array[16, uint8]) =
   var temp: uint8
