@@ -1009,14 +1009,15 @@ template gfMul(a: uint8, b: static uint8): uint8 =
     var res: uint8 = 0
     var aa = a
     var bb = b
-    for i in 0 ..< 8:
-      if (bb and 0x01'u8) != 0'u8:
-        res = res xor aa
-      let hiBit = (aa and 0x80'u8) != 0'u8
-      aa = aa shl 1
-      if hiBit:
-        aa = aa xor 0x1B'u8
+    for i in static(0 ..< 8):
+      let bMask: uint8 = (0'u8 - (bb and 0x01'u8))
+      res = res xor (aa and bMask)
+
+      let hiBitMask = (0'u8 - (aa shr 7))
+      aa = (aa shl 1) xor (0x1B'u8 and hiBitMask)
+
       bb = bb shr 1
+
     res
 
 template xtime(x: uint32): uint32 =
