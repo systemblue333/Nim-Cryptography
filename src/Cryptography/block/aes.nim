@@ -925,7 +925,7 @@ template shiftRows(state: ptr array[16, uint8]): void =
 
   temp = state[2]
   state[2] = state[10]
-  state[10] = temp1
+  state[10] = temp
   temp = state[6]
   state[6] = state[14]
   state[14] = temp
