@@ -915,32 +915,48 @@ template invSubByte[N, T](state: ptr array[N, T]): void =
     address[i] = SBoxD[address[][i]]
 
 template shiftRows(state: ptr array[16, uint8]): void =
-  var matrix: array[4, array[4, uint8]] = [
-    [state[0], state[4], state[8], state[12]],
-    [state[1], state[5], state[9], state[13]],
-    [state[2], state[6], state[10], state[14]],
-    [state[3], state[7], state[11], state[15]]
-  ]
+  var temp1: uint8
 
-  for col in static(0 ..< 4):
-    state[col * 4 + 0] = matrix[0][col]
-    state[col * 4 + 1] = matrix[1][(col + 1) mod 4]
-    state[col * 4 + 2] = matrix[2][(col + 2) mod 4]  
-    state[col * 4 + 3] = matrix[3][(col + 3) mod 4]
+  temp1 = state[1]
+  state[1] = state[5]
+  state[5] = state[9]
+  state[9] = state[13]
+  state[13] = temp1
 
-template invShiftRows(state: ptr array[16, uint8]): void =
-  var matrix: array[4, array[4, uint8]] = [
-    [state[0], state[4], state[8], state[12]],
-    [state[1], state[5], state[9], state[13]],
-    [state[2], state[6], state[10], state[14]],
-    [state[3], state[7], state[11], state[15]]
-  ]
+  temp1 = state[2]
+  state[2] = state[10]
+  state[10] = temp1
+  temp1 = state[6]
+  state[6] = state[14]
+  state[14] = temp1
 
-  for col in static(0 ..< 4):
-    state[col * 4 + 0] = matrix[0][col]
-    state[col * 4 + 1] = matrix[1][(col + 3) mod 4]
-    state[col * 4 + 2] = matrix[2][(col + 2) mod 4]
-    state[col * 4 + 3] = matrix[3][(col + 1) mod 4]
+  temp1 = state[7]
+  state[7] = state[3]
+  state[3] = state[15]
+  state[15] = state[11]
+  state[11] = temp1
+
+template invShiftRows(state: ptr array[16, uint8]) =
+  var temp: uint8
+
+  temp = state[13]
+  state[13] = state[9]
+  state[9] = state[5]
+  state[5] = state[1]
+  state[1] = temp
+
+  temp = state[2]
+  state[2] = state[10]
+  state[10] = temp
+  temp = state[6]
+  state[6] = state[14]
+  state[14] = temp
+
+  temp = state[3]
+  state[3] = state[7]
+  state[7] = state[11]
+  state[11] = state[15]
+  state[15] = temp
 
 template shiftRows(state: ptr array[4, uint32]): void =
   let column0 = state[0]
