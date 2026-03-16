@@ -64,8 +64,7 @@ template has160Transform(state: var array[5, uint32], input: ptr UncheckedArray[
   # declare block
   var x: array[32, uint32]
   # copy input to block
-  for i in static(0 ..< 16):
-    x[i] = input[i]
+  copyMem(addr x[0], unsafeAddr input[0], 64)
 
   # extend block
   x[16] = x[0] xor x[1] xor x[2] xor x[3]
@@ -189,27 +188,26 @@ template has160Transform(state: var array[5, uint32], input: ptr UncheckedArray[
   state[4] += e
 
 # has160 init core
-template has160InitC(ctx: var HAS160Ctx): void =
+template has160InitC(ctx: ptr HAS160Ctx): void =
   # initialize ctx's length
   when Bits == 64:
-    ctx.length = 0x00'u64
+    ctx[].length = 0x00'u64
   elif Bits == 32:
-    ctx.length[0] = 0x00'u32
-    ctx.length[1] = 0x00'u32
+    ctx[].length[0] = 0x00'u32
+    ctx[].length[1] = 0x00'u32
 
   # initialize ctx's state to initialize vector
-  ctx.state[0] = 0x67452301'u32
-  ctx.state[1] = 0xEFCDAB89'u32
-  ctx.state[2] = 0x98BADCFE'u32
-  ctx.state[3] = 0x10325476'u32
-  ctx.state[4] = 0xC3D2E1F0'u32
+  ctx[].state[0] = 0x67452301'u32
+  ctx[].state[1] = 0xEFCDAB89'u32
+  ctx[].state[2] = 0x98BADCFE'u32
+  ctx[].state[3] = 0x10325476'u32
+  ctx[].state[4] = 0xC3D2E1F0'u32
 
 # has160 input core
-template has160InputC*(ctx: var HAS160Ctx, input: openArray[uint8]): void =
+template has160InputC(ctx: ptr HAS160Ctx, input: ptr UncheckedArray[uint8], inputLen: int): void =
   # declare check variables
   var check: bool = true
   # set input length
-  let inputLen: int = input.len
 
   # check input length is not zero
   if inputLen == 0: check = false
@@ -217,18 +215,18 @@ template has160InputC*(ctx: var HAS160Ctx, input: openArray[uint8]): void =
   if check:
     # set index and add input length to ctx's length
     when Bits == 64:
-      var index: int = int(ctx.length and 63)
-      ctx.length += uint64(inputLen)
+      var index: int = int(ctx[].length and 63)
+      ctx[].length += uint64(inputLen)
     elif Bits == 32:
-      let oldLength: uint32 = ctx.length[0]
-      ctx.length[0] += uint32(inputLen)
-      if ctx.length[0] < oldLength:
-        ctx.length[1] += 1
+      let oldLength: uint32 = ctx[].length[0]
+      ctx[].length[0] += uint32(inputLen)
+      if ctx[].length[0] < oldLength:
+        ctx[].length[1] += 1
       var index: int = int(oldLength and 63)
 
     var pos: int = 0
     # set buffer pointer
-    let buffer: ptr UncheckedArray[uint8] = cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0])
+    let buffer: ptr UncheckedArray[uint8] = cast[ptr UncheckedArray[uint8]](addr ctx[].buffer[0])
 
     if index != 0:
       # set left and take
@@ -245,14 +243,14 @@ template has160InputC*(ctx: var HAS160Ctx, input: openArray[uint8]): void =
       # check index is bigger or same then 64
       if index >= 64:
         # call has160 transform template
-        has160Transform(ctx.state, cast[ptr UncheckedArray[uint32]](addr buffer[0]))
+        has160Transform(ctx[].state, cast[ptr UncheckedArray[uint32]](addr buffer[0]))
 
     # loop while input length - pos is bigger or same then 64
     while (inputLen - pos) >= 64:
       # set pointer of input by chunk unit
-      let chunk: ptr UncheckedArray[uint32] = cast[ptr UncheckedArray[uint32]](unsafeAddr input[pos])
+      let chunk: ptr UncheckedArray[uint32] = cast[ptr UncheckedArray[uint32]](addr input[pos])
       # call has160 transform template
-      has160Transform(ctx.state, chunk)
+      has160Transform(ctx[].state, chunk)
       # add 64 to pos
       pos += 64
 
@@ -260,22 +258,22 @@ template has160InputC*(ctx: var HAS160Ctx, input: openArray[uint8]): void =
     let rest = inputLen - pos
     if rest > 0:
       # copy rest of input to buffer
-      copyMem(addr ctx.buffer[0], addr input[pos], rest)
+      copyMem(addr ctx[].buffer[0], addr input[pos], rest)
 
 # has160 final core
-template has160FinalC*(ctx: var HAS160Ctx): array[HAS160_HASH_SIZE, uint8] =
+template has160FinalC(ctx: ptr HAS160Ctx): array[HAS160_HASH_SIZE, uint8] =
   # declare output
   var output: array[20, uint8]
   # set bitLength and index
   when Bits == 64:
-    let bitLength: uint64 = ctx.length shl 3
-    var index: int = int(ctx.length and 63'u64)
+    let bitLength: uint64 = ctx[].length shl 3
+    var index: int = int(ctx[].length and 63'u64)
   elif Bits == 32:
-    var index: int = int(ctx.length[0] and 63'u32)
-    let bitLength: array[2, uint32] = [ctx.length[0] shl 3, (ctx.length[1] shl 3) or ctx.length[0] shr 29]
+    var index: int = int(ctx[].length[0] and 63'u32)
+    let bitLength: array[2, uint32] = [ctx[].length[0] shl 3, (ctx[].length[1] shl 3) or ctx.length[0] shr 29]
 
   # set buffer as pointer of ctx.buffer
-  var buffer: ptr UncheckedArray[uint8] = cast[ptr UncheckedArray[uint8]](addr ctx.buffer[0])
+  var buffer: ptr UncheckedArray[uint8] = cast[ptr UncheckedArray[uint8]](addr ctx[].buffer[0])
 
   # add padding
   buffer[index] = 0x80'u8
@@ -287,7 +285,7 @@ template has160FinalC*(ctx: var HAS160Ctx): array[HAS160_HASH_SIZE, uint8] =
     # set zero to buffer's index ~ 64
     zeroMem(addr buffer[index], HAS160_BLOCK_SIZE - index)
     # call transform
-    has160Transform(ctx.state, cast[ptr UncheckedArray[uint32]](addr ctx.buffer[0]))
+    has160Transform(ctx[].state, cast[ptr UncheckedArray[uint32]](addr ctx[].buffer[0]))
     index = 0
 
   # set zero to buffer's index ~ 56
@@ -304,33 +302,108 @@ template has160FinalC*(ctx: var HAS160Ctx): array[HAS160_HASH_SIZE, uint8] =
       buffer[60 + i] = uint8((bitLength[1] shr (i * 8)) and 0xFF'u32)
 
   # call transform template
-  has160Transform(ctx.state, cast[ptr UncheckedArray[uint32]](addr ctx.buffer[0]))
+  has160Transform(ctx[].state, cast[ptr UncheckedArray[uint32]](addr ctx[].buffer[0]))
 
   # encode state to output
-  encodeLE(ctx.state, output)
+  encodeLE(ctx[].state, output)
 
   # declare output
   output
 
+# has160 final core
+template has160FinalC(ctx: ptr HAS160Ctx, output: ptr array[20, uint8]): void =
+  # set bitLength and index
+  when Bits == 64:
+    let bitLength: uint64 = ctx[].length shl 3
+    var index: int = int(ctx[].length and 63'u64)
+  elif Bits == 32:
+    var index: int = int(ctx[].length[0] and 63'u32)
+    let bitLength: array[2, uint32] = [ctx[].length[0] shl 3, (ctx[].length[1] shl 3) or ctx.length[0] shr 29]
+
+  # set buffer as pointer of ctx.buffer
+  var buffer: ptr UncheckedArray[uint8] = cast[ptr UncheckedArray[uint8]](addr ctx[].buffer[0])
+
+  # add padding
+  buffer[index] = 0x80'u8
+  # increase index
+  inc index
+
+  # if index is bigger then 56
+  if index > 56:
+    # set zero to buffer's index ~ 64
+    zeroMem(addr buffer[index], HAS160_BLOCK_SIZE - index)
+    # call transform
+    has160Transform(ctx[].state, cast[ptr UncheckedArray[uint32]](addr ctx[].buffer[0]))
+    index = 0
+
+  # set zero to buffer's index ~ 56
+  zeroMem(addr buffer[index], 56 - index)
+
+  # add bit length to buffer
+  when Bits == 64:
+    for i in static(0 ..< 8):
+      buffer[56 + i] = uint8((bitLength shr (i * 8)) and 0xFF'u64)
+  elif Bits == 32:
+    for i in static(0 ..< 4):
+      buffer[56 + i] = uint8((bitLength[0] shr (i * 8)) and 0xFF'u32)
+    for i in static(0 ..< 4):
+      buffer[60 + i] = uint8((bitLength[1] shr (i * 8)) and 0xFF'u32)
+
+  # call transform template
+  has160Transform(ctx[].state, cast[ptr UncheckedArray[uint32]](addr ctx[].buffer[0]))
+
+  # encode state to output
+  encodeLE(addr ctx[].state, output)
+
 # export wrappers
 when defined(templateOpt):
   template has160Init*(ctx: var HAS160Ctx): void =
-    has160InitC(ctx)
+    has160InitC(addr ctx)
 
   template has160Input*(ctx: var HAS160Ctx, input: lent openArray[uint8]): void =
-    has160InputC(ctx, input)
+    has160InputC(addr ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input), input.len)
 
   template has160Final*(ctx: var HAS160Ctx): array[HAS160HashSize, uint8] =
-    has160FinalC(ctx)
-else:
-  proc has160Init*(ctx: var HAS160Ctx): void =
+    has160FinalC(addr ctx)
+
+  template has160Final*(ctx: var HAS160Ctx, output: var array[20, uint8]): void =
+    has160FinalC(addr ctx, unsafeAddr output)
+
+  template has160Init*(ctx: ptr HAS160Ctx): void =
     has160InitC(ctx)
 
+  template has160Input*(ctx: ptr HAS160Ctx, input: ptr UncheckedArray[uint8], length: int): void =
+    has160InputC(ctx, input, length)
+
+  template has160Final*(ctx: ptr HAS160Ctx): array[HAS160HashSize, uint8] =
+    has160FinalC(ctx)
+
+  template has160Final*(ctx: ptr HAS160Ctx, output: ptr array[20, uint8]): void =
+    has160FinalC(ctx, output)
+else:
+  proc has160Init*(ctx: var HAS160Ctx): void =
+    has160InitC(addr ctx)
+
   proc has160Input*(ctx: var HAS160Ctx, input: openArray[uint8]): void =
-    has160InputC(ctx, input)
+    has160InputC(addr ctx, cast[ptr UncheckedArray[uint8]](unsafeAddr input), input.len)
 
   proc has160Final*(ctx: var HAS160Ctx): array[HAS160HashSize, uint8] =
+    has160FinalC(addr ctx)
+
+  proc has160Final*(ctx: var HAS160Ctx, output: var array[20, uint8]): void =
+    has160FinalC(addr ctx, addr output)
+
+  proc has160Init*(ctx: ptr HAS160Ctx): void {.exportc: "has160Init", cdecl.} =
+    has160InitC(ctx)
+
+  proc has160Input*(ctx: ptr HAS160Ctx, input: ptr UncheckedArray[uint8], length: int): void {.exportc: "has160Input", cdecl.} =
+    has160InputC(ctx, input, length)
+
+  proc has160Final*(ctx: ptr HAS160Ctx): array[HAS160HashSize, uint8] {.exportc: "has160Final", cdecl.} =
     has160FinalC(ctx)
+
+  proc has160Final*(ctx: ptr HAS160Ctx, output: ptr array[20, uint8]): void {.exportc: "has160FinalM", cdecl.} =
+    has160FinalC(ctx, output)
 
 # test code
 when defined(test):
